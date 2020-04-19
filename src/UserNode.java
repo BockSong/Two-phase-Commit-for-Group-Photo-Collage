@@ -1,3 +1,5 @@
+import java.io.File;
+
 /* 
  *
  * Name: Rong Song
@@ -22,24 +24,81 @@ public class UserNode implements ProjectLib.MessageHandling {
 	 * Return: True if the message is handled, or False if not.
 	 */
 	public boolean deliverMessage( ProjectLib.Message msg ) {
-		System.out.println( myId + ": Got message from " + msg.addr );
-		if (msg.addr.equals("Server")) {
-			// TODO: if it's inquiry
-			// TODO: how to receive img from the server?
+		String msg_body = new String(msg.body);
+		System.out.println( myId + ": Got message ^" + msg_body + "^ from " + msg.addr );
+		// if it's a prepare message
+		if (msg_body.equals("prepare")) {
+			File pic;
 			byte[] img;
 			String[] sources;
-			if (PL.askUser(img, sources)) {
-				// acceptable, return ack msg
-				;
+			String srcName, reply;
+
+			// TODO: init a transaction
+
+			// receive the image name from the server
+			msg = PL.getMessage();
+			srcName = new String(msg.body);
+			pic = new File("." + myId + "/" + srcName);
+
+			// receive the composite image from the server
+			msg = PL.getMessage();
+			img = msg.body;
+
+			// TODO: lock the involved image. if it's already occupied, return notok
+			// file lock: just manually maintain a hashmap of <filename, lock_object> should work?
+
+			// check that this image is still there
+			if (!pic.exists()) {
+				// if not, return notok
+				reply = "notok";
+			}
+			// ask user for decision
+			else if (PL.askUser(img, sources)) {
+				// acceptable, reply is ok
+				reply = "ok";
 			}
 			else {
-				// unacceptable, return reject msg
-				;
+				// unacceptable, reply is notok
+				reply = "notok";
 			}
 
-			// TODO: if it's informing the success of commitment
-			// remove sources images from the UserNode directories
-			// perform other actions after commitment
+			// send the reply
+			msg = new ProjectLib.Message("Server", reply.getBytes());
+			System.out.println( "Server: Sending message to " + msg.addr );
+			PL.sendMessage(msg);
+		}
+		// if it's a decision
+		else {
+			// decision of complete
+			if (msg_body.equals("complete")) {
+				File pic;
+	
+				// receive the image name from the server
+				msg = PL.getMessage();
+				srcName = new String(msg.body);
+				pic = new File("." + myId + "/" + srcName);
+	
+				// delete sources images from the UserNode directories
+				if (!pic.delete()) {
+					System.out.println("Error: delete file failed from " + myId + "/" + srcName);
+				}
+	
+				// TODO: mark the transaction as end
+	
+				// TODO: unlock resources?
+	
+			}
+			// decision of quit
+			else if (msg_body.equals("quit")) {
+				// TODO: cancel transaction, unlock the image (do we do it here, or earlier once askUser is false?)
+			}
+			else {
+				System.out.println("Error: unknown message type");
+			}
+			// send back ack
+			msg = new ProjectLib.Message("Server", "ack".getBytes());
+			System.out.println( "Server: Sending message to " + msg.addr );
+			PL.sendMessage(msg);
 		}
 
 		return true;
@@ -49,10 +108,11 @@ public class UserNode implements ProjectLib.MessageHandling {
 		if (args.length != 2) throw new Exception("Need 2 args: <port> <id>");
 		UserNode UN = new UserNode(args[1]);
 		PL = new ProjectLib( Integer.parseInt(args[0]), args[1], UN );
+		System.out.println( args[1] + " initialized. ");
 		
-		ProjectLib.Message msg = new ProjectLib.Message( "Server", "hello".getBytes() );
-		System.out.println( args[1] + ": Sending message to " + msg.addr );
-		PL.sendMessage( msg );
+		//ProjectLib.Message msg = new ProjectLib.Message( "Server", "hello".getBytes() );
+		//System.out.println( args[1] + ": Sending message to " + msg.addr );
+		//PL.sendMessage( msg );
 	}
 }
 
