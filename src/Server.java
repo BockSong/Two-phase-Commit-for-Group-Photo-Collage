@@ -37,11 +37,13 @@ public class Server implements ProjectLib.CommitServing {
 	 */
 	public void startCommit( String filename, byte[] img, String[] sources ) {
 		System.out.println( "Server: Got request to commit "+filename );
+		
+		ProjectLib.Message mmsg;
+		int i, num_src, vote;
+		String msg_body, decision = "cancel";
+
 		// initiates a 2PC procedure
 		// TODO: add the transaction
-		ProjectLib.Message msg;
-		int i, num_src, vote;
-		String msg_body, decision;
 
 		num_src = sources.length;
 		String[] srcID = new String[num_src];
@@ -51,66 +53,71 @@ public class Server implements ProjectLib.CommitServing {
 			srcID[i] = sources[i].substring(0, sources[i].indexOf(":"));
 			srcName[i] = sources[i].substring(sources[i].indexOf(":") + 1, sources[i].length());
 			
-			// send prepare messages, srcName and the image to each involved site
-			System.out.println( "Server: Sending message ^" + msg_body + "^ to " + msg.addr );
-			msg = new ProjectLib.Message(srcID[i], "prepare".getBytes());
-			PL.sendMessage(msg);
-			System.out.println( "Server: Sending message ^" + srcName[i] + "^ to " + msg.addr );
-			msg = new ProjectLib.Message(srcID[i], srcName[i]);
-			PL.sendMessage(msg);
-			msg = new ProjectLib.Message(srcID[i], img);
-			PL.sendMessage(msg);
+			// send prepare messages, containing srcName, image and sources
+			mmsg = new MyMessage(srcID[i], "prepare".getBytes(), srcName[i], img, sources);
+			System.out.println( "Server: Sending prepare message to " + mmsg.addr );
+			PL.sendMessage(mmsg);
+
 		}
 
 		vote = 0;
 		// receive votes
+		// TODO: this logic won't work, since other types like ack might come at this time
 		for (i = 0; i < num_src; i++) {
 			// block until vote arrive?
-			msg = PL.getMessage();
-			msg_body = new String(msg.body);
+			mmsg = PL.getMessage();
+			msg_body = new String(mmsg.body);
 			// client's reponse is notok
-			if (msg.equals("notok")) {
+			if (msg_body.equals("notok")) {
 				// TODO: cancel the transaction
 
-				decision = "quit";
+				System.out.println( "Server: Got message notok from " + mmsg.addr );
 			}
 			// client's reponse is ok
-			else if (msg.equals("ok")) {
+			else if (msg_body.equals("ok")) {
 				vote += 1;
+				System.out.println( "Server: Got message ok from " + mmsg.addr );
 			}
 			else {
-				System.out.println("Error: unexpected message type");
+				System.out.println("Error in voting: unexpected message type from " + mmsg.addr + " to Server");
 			}
 		}
 
 		if (vote == num_src) {
 			// apporved
-			decision = "complete";
+			decision = "done";
 
-			// save the composite image in the Server directory
-			RandomAccessFile writer = new RandomAccessFile("./Server/" + filename, "rw");
-			writer.write(img);
+			try {
+				// save the composite image in the Server directory
+				RandomAccessFile writer = new RandomAccessFile("./Server/" + filename, "rw");
+				writer.write(img);
+				System.out.println( "Server: successfully save the image. " );
+
+			} catch (Exception e) {
+				System.out.println( "I/O Error in saving the images. ");
+			}
 		}
 
 		// inform the decesion to (every?) clients
 		for (i = 0; i < num_src; i++) {
-			msg = new ProjectLib.Message(srcID[i], decision.getBytes());
-			System.out.println( "Server: Sending message ^" + msg_body + "^ to " + msg.addr );
-			PL.sendMessage(msg);
+			mmsg = new MyMessage(srcID[i], "decision".getBytes(), decision, filename);
+			System.out.println( "Server: Sending decision of \"" + decision + "\" to " + mmsg.addr );
+			PL.sendMessage(mmsg);
 		}
 
 		// receive acks
 		// TODO: retry until all sites ack
 		for (i = 0; i < num_src; i++) {
 			// block until vote arrive?
-			msg = PL.getMessage();
-			msg_body = new String(msg.body);
+			mmsg = PL.getMessage();
+			msg_body = new String(mmsg.body);
 			
-			if (msg.equals("ask")) {
+			if (msg_body.equals("ask")) {
+				System.out.println( "Server: Got ack from " + mmsg.addr );
 				continue;
 			}
 			else {
-				System.out.println("Error: unexpected message type");
+				System.out.println("Error in ack: unexpected message type from " + mmsg.addr + " to Server");
 			}
 		}
 	}
