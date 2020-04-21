@@ -2,7 +2,7 @@
  * 
  * Name: Rong Song
  * Andrew ID: rongsong
- *
+ * 
  * Server.java - Implementation of coordinator in 2PC protocol.
  * 
  * The server class for two-phase commit for group photo collage.
@@ -15,16 +15,25 @@ import java.util.concurrent.*;
 public class Server implements ProjectLib.CommitServing {
 	
 	private static ProjectLib PL;
-	// map the ...
-	private static ConcurrentHashMap<Integer, String> child_role = new 
-							ConcurrentHashMap<Integer, String>();
+	// number (maximum) of generated transaction ID
+	private static Integer num_ID = 0;
+	// map all existing transaction ID with their status (if finished)
+	private static ConcurrentHashMap<Integer, Boolean> trans_status = new 
+							ConcurrentHashMap<Integer, Boolean>();
+	
+	// lock for accessing num_ID
+	private static Object ID_lock = new Object();
+	
 	private static Boolean DEBUG = true; 
 
 	/*
-	 * send: 
+	 * get_ID: generate an sequence of positive integer ID for each transaction.
 	 */
-	private static void send() {
-		;
+	private static int get_ID() {
+		synchronized (ID_lock) {
+			num_ID += 1;
+			return num_ID;
+		}
 	}
 
 	/*
@@ -35,29 +44,29 @@ public class Server implements ProjectLib.CommitServing {
 	 * @sources: Source images contributed to the collage, in forms of "Nodeidx:
 	 * 			 filename"
 	 */
-	public void startCommit( String filename, byte[] img, String[] sources ) {
+	public synchronized void startCommit( String filename, byte[] img, String[] sources ) {
 		System.out.println( "Server: Got request to commit "+filename );
 		
 		ProjectLib.Message mmsg;
-		int i, num_src, vote;
-		String msg_body, decision = "cancel";
+		int i, num_src, vote, trans_ID;
+		String msg_body, decision;
 
-		// initiates a 2PC procedure
-		// TODO: add the transaction
+		// initiates a 2PC procedure, add the transaction
+		trans_ID = get_ID();
+		trans_status.put(trans_ID, false);
 
+		// get the node ID and image name from each source
 		num_src = sources.length;
 		String[] srcID = new String[num_src];
 		String[] srcName = new String[num_src];
 		for (i = 0; i < num_src; i++) {
-			// get the node ID and image name from each source
 			srcID[i] = sources[i].substring(0, sources[i].indexOf(":"));
 			srcName[i] = sources[i].substring(sources[i].indexOf(":") + 1, sources[i].length());
 			
-			// send prepare messages, containing srcName, image and sources
-			mmsg = new MyMessage(srcID[i], "prepare".getBytes(), srcName[i], img, sources);
+			// send prepare messages containing srcName, image and sources
+			mmsg = new MyMessage(srcID[i], "prepare".getBytes(), trans_ID, srcName[i], img, sources);
 			System.out.println( "Server: Sending prepare message to " + mmsg.addr );
 			PL.sendMessage(mmsg);
-
 		}
 
 		vote = 0;
@@ -67,16 +76,14 @@ public class Server implements ProjectLib.CommitServing {
 			// block until vote arrive?
 			mmsg = PL.getMessage();
 			msg_body = new String(mmsg.body);
-			// client's reponse is notok
-			if (msg_body.equals("notok")) {
-				// TODO: cancel the transaction
-
-				System.out.println( "Server: Got message notok from " + mmsg.addr );
-			}
 			// client's reponse is ok
-			else if (msg_body.equals("ok")) {
+			if (msg_body.equals("ok")) {
 				vote += 1;
 				System.out.println( "Server: Got message ok from " + mmsg.addr );
+			}
+			// client's reponse is notok
+			else if (msg_body.equals("notok")) {
+				System.out.println( "Server: Got message notok from " + mmsg.addr );
 			}
 			else {
 				System.out.println("Error in voting: unexpected message type from " + mmsg.addr + " to Server");
@@ -93,20 +100,39 @@ public class Server implements ProjectLib.CommitServing {
 				writer.write(img);
 				System.out.println( "Server: successfully save the image. " );
 
+				// mark the transaction as done
+				if (trans_status.containsKey(trans_ID)) {
+					trans_status.put(trans_ID, true);
+				}
+				else {
+					System.out.println( "Error: cannot find this transaction.");
+				}
+
 			} catch (Exception e) {
 				System.out.println( "I/O Error in saving the images. ");
 			}
 		}
+		else {
+			decision = "cancel";
+			// cancel the transaction
+			if (trans_status.containsKey(trans_ID)) {
+				trans_status.remove(trans_ID);
+			}
+			else {
+				System.out.println( "Error: cannot find this transaction.");
+			}
+
+		}
 
 		// inform the decesion to (every?) clients
 		for (i = 0; i < num_src; i++) {
-			mmsg = new MyMessage(srcID[i], "decision".getBytes(), decision, filename);
+			mmsg = new MyMessage(srcID[i], "decision".getBytes(), trans_ID, srcName[i], decision, filename);
 			System.out.println( "Server: Sending decision of \"" + decision + "\" to " + mmsg.addr );
 			PL.sendMessage(mmsg);
 		}
 
 		// receive acks
-		// TODO: retry until all sites ack
+		// TODO (ck2): retry until all sites ack
 		for (i = 0; i < num_src; i++) {
 			// block until vote arrive?
 			mmsg = PL.getMessage();

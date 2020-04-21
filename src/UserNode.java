@@ -1,4 +1,5 @@
 import java.io.File;
+import java.util.concurrent.ConcurrentHashMap;
 
 /* 
  *
@@ -14,51 +15,63 @@ import java.io.File;
 public class UserNode implements ProjectLib.MessageHandling {
 	public final String myId;
 	public static ProjectLib PL;
+	// map all existing transaction ID with their status (if finished)
+	private static ConcurrentHashMap<Integer, Boolean> trans_status = new 
+							ConcurrentHashMap<Integer, Boolean>();
+	// store the <trans_ID, file> pairs for exclusive acces to occupied files
+	private static ConcurrentHashMap<Integer, File> file_lock = new 
+							ConcurrentHashMap<Integer, File>();
 
+	// lock for read and then modify file_lock
+	private static Object rw_lock = new Object();
+	
 	public UserNode( String id ) {
 		myId = id;
+	}
+
+	/*
+	 * get_reply: get the reponse for a prepare message from the server.
+	 */
+	private static String get_reply(int trans_ID, File pic, byte[] img, String[] sources) {
+		// if the image is occupied, return notok
+		synchronized (rw_lock) {
+			if (file_lock.containsValue(pic)) {
+				return "notok";
+			}
+			// lock the involved image
+			file_lock.put(trans_ID, pic);
+		}
+
+		// if the image is still there and user agree with that
+		if (pic.exists() && PL.askUser(img, sources))
+			return "ok";
+		// if not, return notok
+		else
+			return "notok";
 	}
 
 	/*
 	 * deliverMessage: Callback called when message received.
 	 * Return: True if the message is handled, or False if not.
 	 */
-	public boolean deliverMessage( ProjectLib.Message msg ) {
+	public synchronized boolean deliverMessage( ProjectLib.Message msg ) {
 		String msg_body = new String(msg.body);
 		System.out.println( myId + ": Got message " + msg_body + " from " + msg.addr );
 
 		MyMessage mmsg = (MyMessage) msg;
-		String[] sources;
-		String srcName, reply;
-		byte[] img;
-		File pic;
+		int trans_ID = mmsg.trans_ID;
+		String srcName = mmsg.srcName;
+		File pic = new File("." + myId + "/" + srcName);
 
 		// if it's a prepare message
 		if (msg_body.equals("prepare")) {
-			srcName = mmsg.srcName;
-			pic = new File("." + myId + "/" + srcName);
-			img = mmsg.img;
-			sources = mmsg.sources;
+			byte[] img = mmsg.img;
+			String[] sources = mmsg.sources;
 
-			// TODO: init a transaction
+			// init a transaction
+			trans_status.put(trans_ID, false);
 
-			// TODO: lock the involved image. if it's already occupied, return notok
-			// file lock: just manually maintain a hashmap of <filename, lock_object> should work?
-
-			// check that this image is still there
-			if (!pic.exists()) {
-				// if not, return notok
-				reply = "notok";
-			}
-			// ask user for decision
-			else if (PL.askUser(img, sources)) {
-				// acceptable, reply is ok
-				reply = "ok";
-			}
-			else {
-				// unacceptable, reply is notok
-				reply = "notok";
-			}
+			String reply = get_reply(trans_ID, pic, img, sources);
 
 			// send the reply
 			mmsg = new MyMessage("Server", reply.getBytes());
@@ -69,22 +82,35 @@ public class UserNode implements ProjectLib.MessageHandling {
 		else if (msg_body.equals("decision")) {
 			// decision of done
 			if (msg_body.equals("done")) {
-				srcName = mmsg.srcName;
-				pic = new File("." + myId + "/" + srcName);
-	
 				// delete sources images from the UserNode directories
 				if (!pic.delete()) {
 					System.out.println("Error: delete file failed from " + myId + "/" + srcName);
 				}
 	
-				// TODO: mark the transaction as end
+				// mark the transaction as finished
+				if (trans_status.containsKey(trans_ID)) {
+					trans_status.put(trans_ID, true);
+				}
+				else {
+					System.out.println( "Error: cannot find this transaction.");
+				}
 	
-				// TODO: unlock resources?
-	
+				// unlock occupied resources
+				file_lock.remove(trans_ID);
 			}
 			// decision of cancel
 			else if (msg_body.equals("cancel")) {
-				// TODO: cancel transaction, unlock the image (do we do it here, or earlier once askUser is false?)
+				// TODO: should we do it here, or earlier once askUser is false?
+				// cancel the transaction
+				if (trans_status.containsKey(trans_ID)) {
+					trans_status.remove(trans_ID);
+				}
+				else {
+					System.out.println( "Error: cannot find this transaction.");
+				}
+
+				// unlock occupied resources
+				file_lock.remove(trans_ID);
 			}
 			else {
 				System.out.println("Error: unexpected message type from Server to " + mmsg.addr);
@@ -101,7 +127,7 @@ public class UserNode implements ProjectLib.MessageHandling {
 		return true;
 	}
 	
-	public static void main ( String args[] ) throws Exception {
+	public static synchronized void main ( String args[] ) throws Exception {
 		if (args.length != 2) throw new Exception("Need 2 args: <port> <id>");
 		UserNode UN = new UserNode(args[1]);
 		PL = new ProjectLib( Integer.parseInt(args[0]), args[1], UN );
