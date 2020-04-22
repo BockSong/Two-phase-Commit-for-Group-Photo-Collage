@@ -1,9 +1,3 @@
-import java.io.File;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-
 /* 
  *
  * Name: Rong Song
@@ -14,6 +8,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * The usernode (client) class for two-phase commit for group photo collage.
  * 
  */
+
+import java.io.File;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class UserNode implements ProjectLib.MessageHandling {
 	public static String myId;
@@ -33,9 +33,9 @@ public class UserNode implements ProjectLib.MessageHandling {
 	}
 
 	/*
-	 * get_reply: get the reponse for a prepare message from the server.
+	 * get_opinion: get the reponse for a prepare message from the server.
 	 */
-	private synchronized static String get_reply(MyMessage mmsg) {
+	private synchronized static String get_opinion(MyMessage mmsg) {
 		for (String srcName: mmsg.srcNames) {
 			File pic = new File(srcName);
 
@@ -91,11 +91,11 @@ public class UserNode implements ProjectLib.MessageHandling {
 			// init a transaction
 			trans_status.put(trans_ID, false);
 
-			String reply = get_reply(mmsg);
+			String opinion = get_opinion(mmsg);
 
 			// send the reply
-			mmsg = new MyMessage("Server", "reply2ask".getBytes(), reply);
-			System.out.println( myId + ": Sending reply of \"" + reply + "\"." );
+			mmsg = new MyMessage("Server", "opinion".getBytes(), trans_ID, opinion);
+			System.out.println( myId + ": Sending opinion of " + opinion );
 			PL.sendMessage(mmsg);
 		}
 		// if it's a decision
@@ -151,7 +151,7 @@ public class UserNode implements ProjectLib.MessageHandling {
 				System.out.println("Error: unexpected message type in " + msg.addr);
 			}
 			// send back ack
-			msg = new ProjectLib.Message("Server", "ack".getBytes());
+			msg = new MyMessage("Server", "ack".getBytes(), trans_ID);
 			System.out.println( myId + ": Sending back ack for " + mmsg.decision );
 			PL.sendMessage(msg);
 		}

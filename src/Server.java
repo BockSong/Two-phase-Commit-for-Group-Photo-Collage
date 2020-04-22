@@ -20,10 +20,20 @@ public class Server implements ProjectLib.CommitServing {
 	private static ProjectLib PL;
 	// number (maximum) of generated transaction ID
 	private static Integer num_ID = 0;
-	// map all existing transaction ID with their status (if finished)
+	// map all existing transaction ID with their status (whether finished)
 	private static ConcurrentHashMap<Integer, Boolean> trans_status = new 
 							ConcurrentHashMap<Integer, Boolean>();
-	
+	// map existing transaction ID with some attributes contained in the message
+	private static ConcurrentHashMap<Integer, MyMessage> trans_attri = new 
+							ConcurrentHashMap<Integer, MyMessage>();
+	// TODO: move these into attri
+	// map existing transaction ID with already received votes
+	private static ConcurrentHashMap<Integer, Integer> trans_votes = new 
+							ConcurrentHashMap<Integer, Integer>();
+	// map existing transaction ID with received okvotes
+	private static ConcurrentHashMap<Integer, Integer> trans_okvotes = new 
+							ConcurrentHashMap<Integer, Integer>();
+
 	// lock for accessing num_ID
 	private static Object ID_lock = new Object();
 	
@@ -51,8 +61,8 @@ public class Server implements ProjectLib.CommitServing {
 		System.out.println( "Server: Got request to commit "+filename );
 		
 		ProjectLib.Message mmsg;
-		int i, num_src, vote, trans_ID;
-		String srcID, srcName, msg_body, decision;
+		int i, vote, trans_ID;
+		String srcID, srcName, msg_body;
 
 		// initiates a 2PC procedure, add the transaction
 		trans_ID = get_ID();
@@ -60,7 +70,7 @@ public class Server implements ProjectLib.CommitServing {
 
 		HashMap<String, ArrayList<String>> contributers = new HashMap<>();
 
-		// get the node ID and image name from each source into contributors
+		// get the node ID and image name from each source into contributers
 		for (i = 0; i < sources.length; i++) {
 			srcID = sources[i].substring(0, sources[i].indexOf(":"));
 			srcName = sources[i].substring(sources[i].indexOf(":") + 1, sources[i].length());
@@ -70,59 +80,72 @@ public class Server implements ProjectLib.CommitServing {
 			contributers.put( srcID, new_value );
 		}
 
+		// save attributes to global structure
+		MyMessage attri = new MyMessage("Server", "local".getBytes(), trans_ID, filename, img, contributers);
+		trans_attri.put(trans_ID, attri);
+
 		// send prepare messages containing srcNames, image and sources
 		for (Map.Entry<String, ArrayList<String>> entry : contributers.entrySet()) {
 			mmsg = new MyMessage(entry.getKey(), "prepare".getBytes(), trans_ID, entry.getValue(), img, sources);
-			System.out.println( "Server: Sending prepare message to " + mmsg.addr );
+			System.out.println( "Server: Sending prepare message to " + entry.getKey() );
 			PL.sendMessage(mmsg);
 		}
 
-		// TODO: need init global structures to store both number of votes and oks
-		vote = 0;
-		num_src = contributers.size();
+		// init global structures to store both number of votes and oks
+		trans_votes.put(trans_ID, 0);
+		trans_okvotes.put(trans_ID, 0);
 	}
 	
 	/*
-	 * handleMessage: This method is called when a new candidate collage has been
-	 * posted, and it should cause a new 2PC commit operation to begin.
+	 * handleMessage: Handle a message received by the server.
 	 */
-	public synchronized void handleMessage( ProjectLib.Message msg ) {
+	public static synchronized void handleMessage( ProjectLib.Message msg ) {
 		String msg_body = new String(msg.body);
-		System.out.println( "Server: Got message ^" + msg_body + "^ from " + msg.addr );
+		//System.out.println( "Server: A " + msg_body + " message come from " + msg.addr );
 
 		MyMessage mmsg = (MyMessage) msg;
+		int trans_ID = mmsg.trans_ID;
 
-		// if it's a reply2ask message
-		if (msg_body.equals("reply2ask")) {
+		MyMessage attri = trans_attri.get(trans_ID);
+		String filename = attri.filename;
+		byte[] img = attri.img;
+		HashMap<String, ArrayList<String>> contributers = attri.contributers;
+		int num_src = contributers.size();
+
+		// if it's a opinion message
+		if (msg_body.equals("opinion")) {
+			String decision;
+
 			// update votes
-			for (i = 0; i < num_src; i++) {
-				// block until vote arrive
-				mmsg = PL.getMessage();
-				msg_body = new String(mmsg.body);
-				// client's reponse is ok
-				if (msg_body.equals("ok")) {
-					vote += 1;
-					System.out.println( "Server: Got message ok from " + mmsg.addr );
-				}
-				// client's reponse is notok
-				else if (msg_body.equals("notok")) {
-					System.out.println( "Server: Got message notok from " + mmsg.addr );
-				}
-				else {
-					System.out.println("Error in voting: unexpected message type from " + mmsg.addr + " to Server");
-				}
+			trans_votes.put(trans_ID, trans_votes.get(trans_ID) + 1);
+			
+			if (mmsg.opinion.equals("ok")) {
+				trans_okvotes.put(trans_ID, trans_okvotes.get(trans_ID) + 1);
+				System.out.println( "Server: Got message ok from " + msg.addr );
+			}
+			else if (mmsg.opinion.equals("notok")) {
+				System.out.println( "Server: Got message notok from " + msg.addr );
+			}
+			else {
+				System.out.println("Error in voting: unexpected opinion type from " + msg.addr + " to Server");
 			}
 	
-			if (vote == num_src) {
+			// TODO: use lock here for commit done operation?
+			if (trans_votes.get(trans_ID) == num_src) {
 				// apporved
-				decision = "done";
-	
-				try {
-					// save the composite image in the Server directory
-					RandomAccessFile writer = new RandomAccessFile(filename, "rw");
-					writer.write(img);
-					System.out.println( "Server: successfully save the image. " );
-	
+				if (trans_okvotes.get(trans_ID) == num_src){
+					decision = "done";
+		
+					try {
+						// save the composite image in the Server directory
+						RandomAccessFile writer = new RandomAccessFile(filename, "rw");
+						writer.write(img);
+						System.out.println( "Server: successfully save the image. " );
+
+					} catch (Exception e) {
+						System.out.println( "I/O Error in saving the images. " );
+					}
+
 					// mark the transaction as done
 					if (trans_status.containsKey(trans_ID)) {
 						trans_status.put(trans_ID, true);
@@ -130,43 +153,35 @@ public class Server implements ProjectLib.CommitServing {
 					else {
 						System.out.println( "Error: cannot find this transaction.");
 					}
-	
-				} catch (Exception e) {
-					System.out.println( "I/O Error in saving the images. " );
 				}
-			}
-			else {
-				decision = "cancel";
-				// cancel the transaction
-				if (trans_status.containsKey(trans_ID)) {
-					trans_status.remove(trans_ID);
-				}
+				// cancelled
 				else {
-					System.out.println( "Error: cannot find this transaction.");
+					decision = "cancel";
+					// cancel the transaction
+					if (trans_status.containsKey(trans_ID)) {
+						trans_status.remove(trans_ID);
+					}
+					else {
+						System.out.println( "Error: cannot find this transaction.");
+					}
+				}
+		
+				// inform the decesion to involved UserNodes
+				for (Map.Entry<String, ArrayList<String>> entry : contributers.entrySet()) {
+					mmsg = new MyMessage(entry.getKey(), "decision".getBytes(), trans_ID, entry.getValue(), decision, filename);
+					System.out.println( "Server: Sending decision of \"" + decision + "\" to " + entry.getKey() );
+					PL.sendMessage(mmsg);
 				}
 			}
-	
-			// inform the decesion to involved UserNodes
-			for (Map.Entry<String, ArrayList<String>> entry : contributers.entrySet()) {
-				mmsg = new MyMessage(entry.getKey(), "decision".getBytes(), trans_ID, entry.getValue(), decision, filename);
-				System.out.println( "Server: Sending decision of \"" + decision + "\" to " + mmsg.addr );
-				PL.sendMessage(mmsg);
-			}
-	
 		}
 		// if it's a ack
 		else if (msg_body.equals("ack")) {
+			// TODO (ck2): count ack and update some structure
 			// TODO (ck2): resend informing until all sites ack
-			for (i = 0; i < num_src; i++) {
-				if (msg_body.equals("ack")) {
-					System.out.println( "Server: Got ack from " + mmsg.addr );
-					// TODO: update some ack structure
-					continue;
-				}
-				else {
-					System.out.println("Error in ack: unexpected message type from " + mmsg.addr + " to Server");
-				}
-			}
+			System.out.println( "Server: Got ack from " + msg.addr );
+		}
+		else {
+			System.out.println("Error in handleMessage: unexpected message type from " + msg.addr + " to Server");
 		}
 	}
 
