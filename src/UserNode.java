@@ -37,7 +37,7 @@ public class UserNode implements ProjectLib.MessageHandling {
 	 */
 	private static String get_reply(MyMessage mmsg) {
 		for (String srcName: mmsg.srcNames) {
-			File pic = new File("../../test/" + myId + "/" + srcName);
+			File pic = new File(srcName);
 
 			// check if the image is still there
 			if ( !pic.exists() ) {
@@ -104,7 +104,7 @@ public class UserNode implements ProjectLib.MessageHandling {
 			if (mmsg.decision.equals("done")) {
 				// delete sources images from the UserNode directories
 				for (String srcName: mmsg.srcNames) {
-					File pic = new File("../../test/" + myId + "/" + srcName);
+					File pic = new File(srcName);
 
 					if (!pic.delete()) {
 						System.out.println("Error: delete file failed from " + myId + "/" + srcName);

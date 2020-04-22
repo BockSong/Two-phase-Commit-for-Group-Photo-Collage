@@ -105,7 +105,7 @@ public class Server implements ProjectLib.CommitServing {
 
 			try {
 				// save the composite image in the Server directory
-				RandomAccessFile writer = new RandomAccessFile("../Server/" + filename, "rw");
+				RandomAccessFile writer = new RandomAccessFile(filename, "rw");
 				writer.write(img);
 				System.out.println( "Server: successfully save the image. " );
 
