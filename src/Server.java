@@ -81,12 +81,14 @@ public class Server implements ProjectLib.CommitServing {
 		}
 
 		// save attributes to global structure
-		MyMessage attri = new MyMessage("Server", "local".getBytes(), trans_ID, filename, img, contributers);
+		MyMessage attri = new MyMessage("Server", "local".getBytes(), trans_ID, filename, img, 
+																					contributers);
 		trans_attri.put(trans_ID, attri);
 
 		// send prepare messages containing srcNames, image and sources
 		for (Map.Entry<String, ArrayList<String>> entry : contributers.entrySet()) {
-			mmsg = new MyMessage(entry.getKey(), "prepare".getBytes(), trans_ID, entry.getValue(), img, sources);
+			mmsg = new MyMessage(entry.getKey(), "prepare".getBytes(), trans_ID, entry.getValue(),
+																					 img, sources);
 			System.out.println( "Server: Sending prepare message to " + entry.getKey() );
 			PL.sendMessage(mmsg);
 		}
@@ -127,10 +129,12 @@ public class Server implements ProjectLib.CommitServing {
 				System.out.println( "Server: Got message notok from " + msg.addr );
 			}
 			else {
-				System.out.println("Error in voting: unexpected opinion type from " + msg.addr + " to Server");
+				System.out.println("Error in voting: unexpected opinion type from " + msg.addr 
+																				+ " to Server");
 			}
 	
-			// TODO: use lock here for commit done operation?
+			// TODO: use locks for each transaction's commit done operation? 
+			// (in case 2 consecutive msg both trigger commit)
 			if (trans_votes.get(trans_ID) == num_src) {
 				// apporved
 				if (trans_okvotes.get(trans_ID) == num_src){
@@ -168,8 +172,10 @@ public class Server implements ProjectLib.CommitServing {
 		
 				// inform the decesion to involved UserNodes
 				for (Map.Entry<String, ArrayList<String>> entry : contributers.entrySet()) {
-					mmsg = new MyMessage(entry.getKey(), "decision".getBytes(), trans_ID, entry.getValue(), decision, filename);
-					System.out.println( "Server: Sending decision of \"" + decision + "\" to " + entry.getKey() );
+					mmsg = new MyMessage(entry.getKey(), "decision".getBytes(), trans_ID, 
+														entry.getValue(), decision, filename);
+					System.out.println( "Server: Sending decision of \"" + decision + "\" to " 
+																			+ entry.getKey() );
 					PL.sendMessage(mmsg);
 				}
 			}
@@ -181,7 +187,8 @@ public class Server implements ProjectLib.CommitServing {
 			System.out.println( "Server: Got ack from " + msg.addr );
 		}
 		else {
-			System.out.println("Error in handleMessage: unexpected message type from " + msg.addr + " to Server");
+			System.out.println("Error in handleMessage: unexpected message type from " + msg.addr 
+																			+ " to Server");
 		}
 	}
 
@@ -193,9 +200,7 @@ public class Server implements ProjectLib.CommitServing {
 		// main loop
 		while (true) {
 			ProjectLib.Message msg = PL.getMessage();
-			// TODO: do this func in a new thread?
 			handleMessage(msg);
 		}
 	}
 }
-
