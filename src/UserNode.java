@@ -37,11 +37,12 @@ public class UserNode implements ProjectLib.MessageHandling {
 	 */
 	private static String get_reply(MyMessage mmsg) {
 		for (String srcName: mmsg.srcNames) {
-			File pic = new File("." + myId + "/" + srcName);
+			File pic = new File("../../test/" + myId + "/" + srcName);
 
 			// check if the image is still there
-			if ( !pic.exists() )
+			if ( !pic.exists() ) {
 				return "notok";
+			}
 
 			synchronized (rw_lock) {
 				// if the image is occupied, return notok
@@ -54,10 +55,14 @@ public class UserNode implements ProjectLib.MessageHandling {
 		}
 
 		// check if user agree with that
-		if (PL.askUser(mmsg.img, mmsg.sources))
+        String[] arr = new String[mmsg.srcNames.size()]; 
+        arr = mmsg.srcNames.toArray(arr); 
+		if (PL.askUser(mmsg.img, arr)) {
 			return "ok";
-		else
+		}
+		else {
 			return "notok";
+		}
 	}
 
 	/*
@@ -99,10 +104,13 @@ public class UserNode implements ProjectLib.MessageHandling {
 			if (mmsg.decision.equals("done")) {
 				// delete sources images from the UserNode directories
 				for (String srcName: mmsg.srcNames) {
-					File pic = new File("." + myId + "/" + srcName);
+					File pic = new File("../../test/" + myId + "/" + srcName);
 
 					if (!pic.delete()) {
 						System.out.println("Error: delete file failed from " + myId + "/" + srcName);
+					}
+					else {
+						System.out.println( myId + ": " + srcName + " deleted successfully. " );
 					}
 				}
 
