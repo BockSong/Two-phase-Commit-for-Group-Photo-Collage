@@ -77,98 +77,110 @@ public class Server implements ProjectLib.CommitServing {
 			PL.sendMessage(mmsg);
 		}
 
+		// TODO: need init global structures to store both number of votes and oks
 		vote = 0;
 		num_src = contributers.size();
-		// receive votes
-		// TODO: fix this pure blocking logic (use thread?)
-		for (i = 0; i < num_src; i++) {
-			// block until vote arrive
-			mmsg = PL.getMessage();
-			msg_body = new String(mmsg.body);
-			// client's reponse is ok
-			if (msg_body.equals("ok")) {
-				vote += 1;
-				System.out.println( "Server: Got message ok from " + mmsg.addr );
+	}
+	
+	/*
+	 * handleMessage: This method is called when a new candidate collage has been
+	 * posted, and it should cause a new 2PC commit operation to begin.
+	 */
+	public synchronized void handleMessage( ProjectLib.Message msg ) {
+		String msg_body = new String(msg.body);
+		System.out.println( "Server: Got message ^" + msg_body + "^ from " + msg.addr );
+
+		MyMessage mmsg = (MyMessage) msg;
+
+		// if it's a reply2ask message
+		if (msg_body.equals("reply2ask")) {
+			// update votes
+			for (i = 0; i < num_src; i++) {
+				// block until vote arrive
+				mmsg = PL.getMessage();
+				msg_body = new String(mmsg.body);
+				// client's reponse is ok
+				if (msg_body.equals("ok")) {
+					vote += 1;
+					System.out.println( "Server: Got message ok from " + mmsg.addr );
+				}
+				// client's reponse is notok
+				else if (msg_body.equals("notok")) {
+					System.out.println( "Server: Got message notok from " + mmsg.addr );
+				}
+				else {
+					System.out.println("Error in voting: unexpected message type from " + mmsg.addr + " to Server");
+				}
 			}
-			// client's reponse is notok
-			else if (msg_body.equals("notok")) {
-				System.out.println( "Server: Got message notok from " + mmsg.addr );
+	
+			if (vote == num_src) {
+				// apporved
+				decision = "done";
+	
+				try {
+					// save the composite image in the Server directory
+					RandomAccessFile writer = new RandomAccessFile(filename, "rw");
+					writer.write(img);
+					System.out.println( "Server: successfully save the image. " );
+	
+					// mark the transaction as done
+					if (trans_status.containsKey(trans_ID)) {
+						trans_status.put(trans_ID, true);
+					}
+					else {
+						System.out.println( "Error: cannot find this transaction.");
+					}
+	
+				} catch (Exception e) {
+					System.out.println( "I/O Error in saving the images. " );
+				}
 			}
 			else {
-				System.out.println("Error in voting: unexpected message type from " + mmsg.addr + " to Server");
-			}
-		}
-
-		if (vote == num_src) {
-			// apporved
-			decision = "done";
-
-			try {
-				// save the composite image in the Server directory
-				RandomAccessFile writer = new RandomAccessFile(filename, "rw");
-				writer.write(img);
-				System.out.println( "Server: successfully save the image. " );
-
-				// mark the transaction as done
+				decision = "cancel";
+				// cancel the transaction
 				if (trans_status.containsKey(trans_ID)) {
-					trans_status.put(trans_ID, true);
+					trans_status.remove(trans_ID);
 				}
 				else {
 					System.out.println( "Error: cannot find this transaction.");
 				}
-
-			} catch (Exception e) {
-				System.out.println( "I/O Error in saving the images. " );
 			}
+	
+			// inform the decesion to involved UserNodes
+			for (Map.Entry<String, ArrayList<String>> entry : contributers.entrySet()) {
+				mmsg = new MyMessage(entry.getKey(), "decision".getBytes(), trans_ID, entry.getValue(), decision, filename);
+				System.out.println( "Server: Sending decision of \"" + decision + "\" to " + mmsg.addr );
+				PL.sendMessage(mmsg);
+			}
+	
 		}
-		else {
-			decision = "cancel";
-			// cancel the transaction
-			if (trans_status.containsKey(trans_ID)) {
-				trans_status.remove(trans_ID);
-			}
-			else {
-				System.out.println( "Error: cannot find this transaction.");
-			}
-		}
-
-		// inform the decesion to involved UserNodes
-		for (Map.Entry<String, ArrayList<String>> entry : contributers.entrySet()) {
-			mmsg = new MyMessage(entry.getKey(), "decision".getBytes(), trans_ID, entry.getValue(), decision, filename);
-			System.out.println( "Server: Sending decision of \"" + decision + "\" to " + mmsg.addr );
-			PL.sendMessage(mmsg);
-		}
-
-		// receive acks
-		// TODO (ck2): retry until all sites ack
-		for (i = 0; i < num_src; i++) {
-			// block until ack arrive
-			mmsg = PL.getMessage();
-			msg_body = new String(mmsg.body);
-			
-			if (msg_body.equals("ack")) {
-				System.out.println( "Server: Got ack from " + mmsg.addr );
-				continue;
-			}
-			else {
-				System.out.println("Error in ack: unexpected message type from " + mmsg.addr + " to Server");
+		// if it's a ack
+		else if (msg_body.equals("ack")) {
+			// TODO (ck2): resend informing until all sites ack
+			for (i = 0; i < num_src; i++) {
+				if (msg_body.equals("ack")) {
+					System.out.println( "Server: Got ack from " + mmsg.addr );
+					// TODO: update some ack structure
+					continue;
+				}
+				else {
+					System.out.println("Error in ack: unexpected message type from " + mmsg.addr + " to Server");
+				}
 			}
 		}
 	}
-	
+
 	public static void main ( String args[] ) throws Exception {
 		if (args.length != 1) throw new Exception("Need 1 arg: <port>");
 		Server srv = new Server();
 		PL = new ProjectLib( Integer.parseInt(args[0]), srv );
 		
-		/*// main loop
+		// main loop
 		while (true) {
 			ProjectLib.Message msg = PL.getMessage();
-			String msg_body = new String(msg.body);
-			System.out.println( "Server: Got message ^" + msg_body + "^ from " + msg.addr );
-			System.out.println( "Server: Echoing message to " + msg.addr );
-			PL.sendMessage( msg );
-		}*/
+			// TODO: do this func in a new thread?
+			handleMessage(msg);
+		}
 	}
 }
 

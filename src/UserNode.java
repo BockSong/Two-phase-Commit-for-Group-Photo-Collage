@@ -35,7 +35,7 @@ public class UserNode implements ProjectLib.MessageHandling {
 	/*
 	 * get_reply: get the reponse for a prepare message from the server.
 	 */
-	private static String get_reply(MyMessage mmsg) {
+	private synchronized static String get_reply(MyMessage mmsg) {
 		for (String srcName: mmsg.srcNames) {
 			File pic = new File(srcName);
 
@@ -94,7 +94,7 @@ public class UserNode implements ProjectLib.MessageHandling {
 			String reply = get_reply(mmsg);
 
 			// send the reply
-			mmsg = new MyMessage("Server", reply.getBytes());
+			mmsg = new MyMessage("Server", "reply2ask".getBytes(), reply);
 			System.out.println( myId + ": Sending reply of \"" + reply + "\"." );
 			PL.sendMessage(mmsg);
 		}

@@ -12,6 +12,7 @@ public class MyMessage extends ProjectLib.Message{
     public String[] sources;
     public String decision;
     public String filename;
+    public String opinion;
 
     public MyMessage( String addr, byte[] body ) {
         super(addr, body);
@@ -40,4 +41,10 @@ public class MyMessage extends ProjectLib.Message{
 
     /* For UserNode */
     // reply type
+    // decision type
+    public MyMessage( String addr, byte[] body, String opinion ) {
+        super(addr, body);
+        this.opinion = opinion;
+    }
+
 }
