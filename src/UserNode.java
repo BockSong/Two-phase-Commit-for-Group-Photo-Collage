@@ -1,4 +1,7 @@
 import java.io.File;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /* 
@@ -13,14 +16,14 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 
 public class UserNode implements ProjectLib.MessageHandling {
-	public final String myId;
+	public static String myId;
 	public static ProjectLib PL;
 	// map all existing transaction ID with their status (if finished)
 	private static ConcurrentHashMap<Integer, Boolean> trans_status = new 
 							ConcurrentHashMap<Integer, Boolean>();
-	// store the <trans_ID, file> pairs for exclusive acces to occupied files
-	private static ConcurrentHashMap<Integer, File> file_lock = new 
-							ConcurrentHashMap<Integer, File>();
+	// store <file, trans_ID> pairs for exclusive access to every occupied files
+	private static ConcurrentHashMap<File, Integer> file_lock = new 
+							ConcurrentHashMap<File, Integer>();
 
 	// lock for read and then modify file_lock
 	private static Object rw_lock = new Object();
@@ -32,20 +35,27 @@ public class UserNode implements ProjectLib.MessageHandling {
 	/*
 	 * get_reply: get the reponse for a prepare message from the server.
 	 */
-	private static String get_reply(int trans_ID, File pic, byte[] img, String[] sources) {
-		// if the image is occupied, return notok
-		synchronized (rw_lock) {
-			if (file_lock.containsValue(pic)) {
+	private static String get_reply(MyMessage mmsg) {
+		for (String srcName: mmsg.srcNames) {
+			File pic = new File("." + myId + "/" + srcName);
+
+			// check if the image is still there
+			if ( !pic.exists() )
 				return "notok";
+
+			synchronized (rw_lock) {
+				// if the image is occupied, return notok
+				if (file_lock.containsKey(pic)) {
+					return "notok";
+				}
+				// lock the involved image
+				file_lock.put(pic, mmsg.trans_ID);
 			}
-			// lock the involved image
-			file_lock.put(trans_ID, pic);
 		}
 
-		// if the image is still there and user agree with that
-		if (pic.exists() && PL.askUser(img, sources))
+		// check if user agree with that
+		if (PL.askUser(mmsg.img, mmsg.sources))
 			return "ok";
-		// if not, return notok
 		else
 			return "notok";
 	}
@@ -56,37 +66,46 @@ public class UserNode implements ProjectLib.MessageHandling {
 	 */
 	public synchronized boolean deliverMessage( ProjectLib.Message msg ) {
 		String msg_body = new String(msg.body);
-		System.out.println( myId + ": Got message " + msg_body + " from " + msg.addr );
+		System.out.println( myId + ": Got message " + msg_body );
 
 		MyMessage mmsg = (MyMessage) msg;
 		int trans_ID = mmsg.trans_ID;
-		String srcName = mmsg.srcName;
-		File pic = new File("." + myId + "/" + srcName);
+		ArrayList<String> srcNames = mmsg.srcNames;
 
 		// if it's a prepare message
 		if (msg_body.equals("prepare")) {
+			// If has handled this message before, skip it
+			if (trans_status.containsKey(trans_ID)) {
+				System.out.println( myId + ": Do nothing to the resend message. ");
+				return true;
+			}
+
 			byte[] img = mmsg.img;
 			String[] sources = mmsg.sources;
 
 			// init a transaction
 			trans_status.put(trans_ID, false);
 
-			String reply = get_reply(trans_ID, pic, img, sources);
+			String reply = get_reply(mmsg);
 
 			// send the reply
 			mmsg = new MyMessage("Server", reply.getBytes());
-			System.out.println( myId + ": Sending reply of \"" + reply + "\"to Server." );
+			System.out.println( myId + ": Sending reply of \"" + reply + "\"." );
 			PL.sendMessage(mmsg);
 		}
 		// if it's a decision
 		else if (msg_body.equals("decision")) {
 			// decision of done
-			if (msg_body.equals("done")) {
+			if (mmsg.decision.equals("done")) {
 				// delete sources images from the UserNode directories
-				if (!pic.delete()) {
-					System.out.println("Error: delete file failed from " + myId + "/" + srcName);
+				for (String srcName: mmsg.srcNames) {
+					File pic = new File("." + myId + "/" + srcName);
+
+					if (!pic.delete()) {
+						System.out.println("Error: delete file failed from " + myId + "/" + srcName);
+					}
 				}
-	
+
 				// mark the transaction as finished
 				if (trans_status.containsKey(trans_ID)) {
 					trans_status.put(trans_ID, true);
@@ -96,10 +115,14 @@ public class UserNode implements ProjectLib.MessageHandling {
 				}
 	
 				// unlock occupied resources
-				file_lock.remove(trans_ID);
+				for (Map.Entry<File, Integer> entry : file_lock.entrySet()) {
+					if (entry.getValue() == trans_ID) {
+						file_lock.remove(entry.getKey());
+					}
+				}
 			}
 			// decision of cancel
-			else if (msg_body.equals("cancel")) {
+			else if (mmsg.decision.equals("cancel")) {
 				// TODO: should we do it here, or earlier once askUser is false?
 				// cancel the transaction
 				if (trans_status.containsKey(trans_ID)) {
@@ -110,18 +133,22 @@ public class UserNode implements ProjectLib.MessageHandling {
 				}
 
 				// unlock occupied resources
-				file_lock.remove(trans_ID);
+				for (Map.Entry<File, Integer> entry : file_lock.entrySet()) {
+					if (entry.getValue() == trans_ID) {
+						file_lock.remove(entry.getKey());
+					}
+				}
 			}
 			else {
-				System.out.println("Error: unexpected message type from Server to " + mmsg.addr);
+				System.out.println("Error: unexpected message type in " + msg.addr);
 			}
 			// send back ack
 			msg = new ProjectLib.Message("Server", "ack".getBytes());
-			System.out.println( myId + ": Sending ack to Server " );
+			System.out.println( myId + ": Sending back ack for " + mmsg.decision );
 			PL.sendMessage(msg);
 		}
 		else {
-			System.out.println("Error: unexpected message type from Server to " + mmsg.addr);
+			System.out.println("Error: unexpected message type in " + msg.addr);
 		}
 
 		return true;

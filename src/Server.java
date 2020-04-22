@@ -10,6 +10,9 @@
  */
 
 import java.io.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.*;
 
 public class Server implements ProjectLib.CommitServing {
@@ -49,31 +52,37 @@ public class Server implements ProjectLib.CommitServing {
 		
 		ProjectLib.Message mmsg;
 		int i, num_src, vote, trans_ID;
-		String msg_body, decision;
+		String srcID, srcName, msg_body, decision;
 
 		// initiates a 2PC procedure, add the transaction
 		trans_ID = get_ID();
 		trans_status.put(trans_ID, false);
 
-		// get the node ID and image name from each source
-		num_src = sources.length;
-		String[] srcID = new String[num_src];
-		String[] srcName = new String[num_src];
-		for (i = 0; i < num_src; i++) {
-			srcID[i] = sources[i].substring(0, sources[i].indexOf(":"));
-			srcName[i] = sources[i].substring(sources[i].indexOf(":") + 1, sources[i].length());
-			
-			// send prepare messages containing srcName, image and sources
-			mmsg = new MyMessage(srcID[i], "prepare".getBytes(), trans_ID, srcName[i], img, sources);
+		HashMap<String, ArrayList<String>> contributers = new HashMap<>();
+
+		// get the node ID and image name from each source into contributors
+		for (i = 0; i < sources.length; i++) {
+			srcID = sources[i].substring(0, sources[i].indexOf(":"));
+			srcName = sources[i].substring(sources[i].indexOf(":") + 1, sources[i].length());
+
+			ArrayList<String> new_value = contributers.getOrDefault(srcID, new ArrayList<String>());
+			new_value.add(srcName);
+			contributers.put( srcID, new_value );
+		}
+
+		// send prepare messages containing srcNames, image and sources
+		for (Map.Entry<String, ArrayList<String>> entry : contributers.entrySet()) {
+			mmsg = new MyMessage(entry.getKey(), "prepare".getBytes(), trans_ID, entry.getValue(), img, sources);
 			System.out.println( "Server: Sending prepare message to " + mmsg.addr );
 			PL.sendMessage(mmsg);
 		}
 
 		vote = 0;
+		num_src = contributers.size();
 		// receive votes
-		// TODO: this logic won't work, since other types like ack might come at this time
+		// TODO: fix this pure blocking logic (use thread?)
 		for (i = 0; i < num_src; i++) {
-			// block until vote arrive?
+			// block until vote arrive
 			mmsg = PL.getMessage();
 			msg_body = new String(mmsg.body);
 			// client's reponse is ok
@@ -109,7 +118,7 @@ public class Server implements ProjectLib.CommitServing {
 				}
 
 			} catch (Exception e) {
-				System.out.println( "I/O Error in saving the images. ");
+				System.out.println( "I/O Error in saving the images. " );
 			}
 		}
 		else {
@@ -121,12 +130,11 @@ public class Server implements ProjectLib.CommitServing {
 			else {
 				System.out.println( "Error: cannot find this transaction.");
 			}
-
 		}
 
-		// inform the decesion to (every?) clients
-		for (i = 0; i < num_src; i++) {
-			mmsg = new MyMessage(srcID[i], "decision".getBytes(), trans_ID, srcName[i], decision, filename);
+		// inform the decesion to involved UserNodes
+		for (Map.Entry<String, ArrayList<String>> entry : contributers.entrySet()) {
+			mmsg = new MyMessage(entry.getKey(), "decision".getBytes(), trans_ID, entry.getValue(), decision, filename);
 			System.out.println( "Server: Sending decision of \"" + decision + "\" to " + mmsg.addr );
 			PL.sendMessage(mmsg);
 		}
@@ -134,11 +142,11 @@ public class Server implements ProjectLib.CommitServing {
 		// receive acks
 		// TODO (ck2): retry until all sites ack
 		for (i = 0; i < num_src; i++) {
-			// block until vote arrive?
+			// block until ack arrive
 			mmsg = PL.getMessage();
 			msg_body = new String(mmsg.body);
 			
-			if (msg_body.equals("ask")) {
+			if (msg_body.equals("ack")) {
 				System.out.println( "Server: Got ack from " + mmsg.addr );
 				continue;
 			}
