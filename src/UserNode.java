@@ -135,16 +135,16 @@ public class UserNode implements ProjectLib.MessageHandling {
 				// cancel the transaction
 				if (trans_status.containsKey(trans_ID)) {
 					trans_status.remove(trans_ID);
+
+					// unlock occupied resources
+					for (Map.Entry<File, Integer> entry : file_lock.entrySet()) {
+						if (entry.getValue() == trans_ID) {
+							file_lock.remove(entry.getKey());
+						}
+					}
 				}
 				else {
-					System.out.println( "Error: cannot find this transaction.");
-				}
-
-				// unlock occupied resources
-				for (Map.Entry<File, Integer> entry : file_lock.entrySet()) {
-					if (entry.getValue() == trans_ID) {
-						file_lock.remove(entry.getKey());
-					}
+					System.out.println( myId + ": re-received a decision to cancel.");
 				}
 			}
 			else {
