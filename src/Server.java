@@ -18,8 +18,10 @@ import java.util.concurrent.*;
 public class Server implements ProjectLib.CommitServing {
 	
 	private static ProjectLib PL;
+	// threshold of timeout
+	private static int TIMEOUT_TH = 6;
 	// number (maximum) of generated transaction ID
-	private static Integer num_ID = 0;
+	private static int num_ID = 0;
 	// map all existing transaction ID with their status (whether finished)
 	private static ConcurrentHashMap<Integer, Boolean> trans_status = new 
 							ConcurrentHashMap<Integer, Boolean>();
@@ -47,6 +49,116 @@ public class Server implements ProjectLib.CommitServing {
 			num_ID += 1;
 			return num_ID;
 		}
+	}
+
+	/*
+	 * processPhase1: Process the first phase. If it ends or timeout, start next phase.
+	 */
+	public static void processPhase1() {
+		new Thread(new Runnable(){
+		
+			@Override
+			public void run() {
+				// init timestamp for phase 1
+				long startTime = System.currentTimeMillis();
+				String decision;	
+
+				// keeping check if timeout or receive all
+				while (1) {
+					// TODO: use locks for each transaction's commit done operation?
+					// (in case 2 consecutive msg both trigger commit)
+					if (trans_votes.get(trans_ID) == num_src) {
+						// apporved
+						if (trans_okvotes.get(trans_ID) == num_src){
+							decision = "done";
+				
+							try {
+								// save the composite image in the Server directory
+								RandomAccessFile writer = new RandomAccessFile(filename, "rw");
+								writer.write(img);
+								System.out.println( "Server: successfully save the image. " );
+	
+							} catch (Exception e) {
+								System.out.println( "I/O Error in saving the images. " );
+							}
+	
+							// mark the transaction as done
+							if (trans_status.containsKey(trans_ID)) {
+								trans_status.put(trans_ID, true);
+							}
+							else {
+								System.out.println( "Error: cannot find this transaction.");
+							}
+						}
+						// cancelled
+						else {
+							decision = "cancel";
+							// cancel the transaction
+							if (trans_status.containsKey(trans_ID)) {
+								trans_status.remove(trans_ID);
+							}
+							else {
+								System.out.println( "Error: cannot find this transaction.");
+							}
+						}
+						break;
+					}
+					// timeout
+					else if (System.currentTimeMillis() - startTime > TIMEOUT_TH) {
+						decision = "cancel"; // TODO: any difference with abort?
+						break;
+					}
+					// sleep for some time?
+				}
+
+				// TODO: go into the next phase, mark all acks as unreceived
+				for (Map.Entry<String, ArrayList<String>> entry : contributers.entrySet()) {
+					;
+				}
+
+				// start the second thread
+				processPhase2();
+			}
+		}).start();
+	}
+
+	/*
+	 * processPhase2: Process the second phase and keep checking that if of 2PC ends.
+	 */
+	public static void processPhase2() {
+		new Thread(new Runnable(){
+		
+			@Override
+			public void run() {
+				// resend decision until all sites ack
+				while (not all received) {
+					// TODO: inform the decesion to UNRECEIVED and involved UserNodes
+					for (Map.Entry<String, ArrayList<String>> entry : contributers.entrySet()) {
+						mmsg = new MyMessage(entry.getKey(), "decision".getBytes(), trans_ID, 
+															entry.getValue(), decision, filename);
+						System.out.println( "Server: Sending decision of \"" + decision + "\" to " 
+																				+ entry.getKey() );
+						PL.sendMessage(mmsg);
+					}
+
+					// init timestamp for phase 2
+					long startTime = System.currentTimeMillis();
+	
+					// keeping check if timeout or receive all
+					while (System.currentTimeMillis() - startTime <= TIMEOUT_TH) {
+						// TODO: use locks for each transaction's commit done operation?
+						// receive all
+						if (trans_votes.get(trans_ID) == num_src) {
+							// TODO: mark this transcation as all done
+			
+							// terminate the thread
+							return;
+						}
+						// sleep for some time?
+					}
+				}
+			}
+		}).start();
 	}
 
 	/*
@@ -96,6 +208,11 @@ public class Server implements ProjectLib.CommitServing {
 		// init global structures to store both number of votes and oks
 		trans_votes.put(trans_ID, 0);
 		trans_okvotes.put(trans_ID, 0);
+
+		// TODO: init a structure for arrived opinions
+
+		// start a new thread processPhase1
+		processPhase1();
 	}
 	
 	/*
@@ -116,8 +233,6 @@ public class Server implements ProjectLib.CommitServing {
 
 		// if it's a opinion message
 		if (msg_body.equals("opinion")) {
-			String decision;
-
 			// update votes
 			trans_votes.put(trans_ID, trans_votes.get(trans_ID) + 1);
 			
@@ -132,58 +247,10 @@ public class Server implements ProjectLib.CommitServing {
 				System.out.println("Error in voting: unexpected opinion type from " + msg.addr 
 																				+ " to Server");
 			}
-	
-			// TODO: use locks for each transaction's commit done operation? 
-			// (in case 2 consecutive msg both trigger commit)
-			if (trans_votes.get(trans_ID) == num_src) {
-				// apporved
-				if (trans_okvotes.get(trans_ID) == num_src){
-					decision = "done";
-		
-					try {
-						// save the composite image in the Server directory
-						RandomAccessFile writer = new RandomAccessFile(filename, "rw");
-						writer.write(img);
-						System.out.println( "Server: successfully save the image. " );
-
-					} catch (Exception e) {
-						System.out.println( "I/O Error in saving the images. " );
-					}
-
-					// mark the transaction as done
-					if (trans_status.containsKey(trans_ID)) {
-						trans_status.put(trans_ID, true);
-					}
-					else {
-						System.out.println( "Error: cannot find this transaction.");
-					}
-				}
-				// cancelled
-				else {
-					decision = "cancel";
-					// cancel the transaction
-					if (trans_status.containsKey(trans_ID)) {
-						trans_status.remove(trans_ID);
-					}
-					else {
-						System.out.println( "Error: cannot find this transaction.");
-					}
-				}
-		
-				// inform the decesion to involved UserNodes
-				for (Map.Entry<String, ArrayList<String>> entry : contributers.entrySet()) {
-					mmsg = new MyMessage(entry.getKey(), "decision".getBytes(), trans_ID, 
-														entry.getValue(), decision, filename);
-					System.out.println( "Server: Sending decision of \"" + decision + "\" to " 
-																			+ entry.getKey() );
-					PL.sendMessage(mmsg);
-				}
-			}
 		}
 		// if it's a ack
 		else if (msg_body.equals("ack")) {
-			// TODO (ck2): count ack and update some structure
-			// TODO (ck2): resend informing until all sites ack
+			// TODO: count ack and update some structure
 			System.out.println( "Server: Got ack from " + msg.addr );
 		}
 		else {

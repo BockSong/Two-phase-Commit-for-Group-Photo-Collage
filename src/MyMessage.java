@@ -22,8 +22,8 @@ public class MyMessage extends ProjectLib.Message{
     public String opinion;
 
     // local attributes for server
-    public int votes;
-    public int okvotes;
+    public int votes; // not used
+    public int okvotes; // not used
     public HashMap<String, ArrayList<String>> contributers;
 
     public MyMessage( String addr, byte[] body ) {
