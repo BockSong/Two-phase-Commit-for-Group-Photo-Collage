@@ -22,9 +22,10 @@ public class Server implements ProjectLib.CommitServing {
 	private static int TIMEOUT_TH = 6000;
 	// number (maximum) of generated transaction ID
 	private static int num_ID = 0;
-	// map all existing transaction ID with their status (whether finished)
-	private static ConcurrentHashMap<Integer, Boolean> trans_status = new 
-							ConcurrentHashMap<Integer, Boolean>();
+	// map transaction ID with their status (startPhase1, startPhase2, transDone)
+	// TODO: use enum for status
+	private static ConcurrentHashMap<Integer, String> trans_status = new 
+							ConcurrentHashMap<Integer, String>();
 	// map existing transaction ID with some attributes contained in the message
 	private static ConcurrentHashMap<Integer, MyMessage> trans_attri = new 
 							ConcurrentHashMap<Integer, MyMessage>();
@@ -68,32 +69,42 @@ public class Server implements ProjectLib.CommitServing {
 		ProjectLib.Message mmsg;
 		int i, vote, trans_ID;
 		String srcID, srcName, msg_body;
-
-		// initiates a 2PC procedure, add the transaction
-		trans_ID = get_ID();
-		trans_status.put(trans_ID, false);
-
 		HashMap<String, ArrayList<String>> contributers = new HashMap<>();
+
+		trans_ID = get_ID();
 
 		// get the node ID and image name from each source into contributers
 		for (i = 0; i < sources.length; i++) {
 			srcID = sources[i].substring(0, sources[i].indexOf(":"));
 			srcName = sources[i].substring(sources[i].indexOf(":") + 1, sources[i].length());
 
-			ArrayList<String> new_value = contributers.getOrDefault(srcID, new ArrayList<String>());
+			ArrayList<String> new_value = contributers.getOrDefault(srcID, 
+																	new ArrayList<String>());
 			new_value.add(srcName);
 			contributers.put( srcID, new_value );
 		}
 
 		// save attributes to global structure
-		MyMessage attri = new MyMessage("Server", "local".getBytes(), trans_ID, filename, img, 
-																					contributers);
+		MyMessage attri = new MyMessage("Server", "local".getBytes(), trans_ID, filename, 
+																	img, contributers);
 		trans_attri.put(trans_ID, attri);
+
+		// assume the above process succeed
+		// initiates a 2PC transaction
+		trans_status.put(trans_ID, "startPhase1");
+
+		// write log before phase 1
+		RandomAccessFile writer = new RandomAccessFile("server.log", "rw");
+		String log_line = Integer.toString(trans_ID) + ":startPhase1\n";
+		writer.write(log_line.getBytes());
+		writer.flush();
+		writer.close();
+		PL.fsync();
 
 		// send prepare messages containing srcNames, image and sources
 		for (Map.Entry<String, ArrayList<String>> entry : contributers.entrySet()) {
-			mmsg = new MyMessage(entry.getKey(), "prepare".getBytes(), trans_ID, entry.getValue(),
-																					 img, sources);
+			mmsg = new MyMessage(entry.getKey(), "prepare".getBytes(), trans_ID, 
+														entry.getValue(), img, sources);
 			System.out.println( "Server: Sending prepare message to " + entry.getKey() );
 			PL.sendMessage(mmsg);
 		}
@@ -129,7 +140,6 @@ public class Server implements ProjectLib.CommitServing {
 					// mark: use locks for each transaction's commit done operation?
 					// (in case 2 consecutive msg both trigger commit)
 					if (trans_votes.get(trans_ID) == num_src) {
-						//System.out.println( "Server: Got all opinions: " + trans_votes.get(trans_ID) );
 						// apporved
 						if (trans_okvotes.get(trans_ID) == num_src){
 							decision = "done";
@@ -143,34 +153,19 @@ public class Server implements ProjectLib.CommitServing {
 							} catch (Exception e) {
 								System.out.println( "I/O Error in saving the images. " );
 							}
-	
-							// mark the transaction as done
-							if (trans_status.containsKey(trans_ID)) {
-								trans_status.put(trans_ID, true);
-							}
-							else {
-								System.out.println( "Error: cannot find this transaction.");
-							}
 						}
 						// cancelled
 						else {
 							decision = "cancel";
-							// cancel the transaction
-							if (trans_status.containsKey(trans_ID)) {
-								trans_status.remove(trans_ID);
-							}
-							else {
-								System.out.println( "Error: cannot find this transaction.");
-							}
 						}
+						
 						break;
 					}
 					// timeout
 					else if (System.currentTimeMillis() - startTime > TIMEOUT_TH) {
-						decision = "cancel"; // TODO: any difference with abort?
+						decision = "cancel"; // abort for timeout
 						break;
 					}
-					// sleep for some time?
 				}
 
 				// save the decision
@@ -179,11 +174,27 @@ public class Server implements ProjectLib.CommitServing {
 
 				// go into the next phase, mark all acks as unreceived
 				ArrayList<String> userList = new ArrayList<String>();
-
 				for (Map.Entry<String, ArrayList<String>> entry : contributers.entrySet()) {
 					userList.add(entry.getKey());
 				}
+
 				trans_unrevACK.put(trans_ID, userList);
+
+				// mark the transaction as phase 2
+				if (trans_status.containsKey(trans_ID)) {
+					trans_status.put(trans_ID, "startPhase2");
+				}
+				else {
+					System.out.println( "Error: cannot find this transaction.");
+				}
+				
+				// write log before phase 2
+				RandomAccessFile writer = new RandomAccessFile("server.log", "rw");
+				String log_line = Integer.toString(trans_ID) + ":startPhase2\n";
+				writer.write(log_line.getBytes());
+				writer.flush();
+				writer.close();
+				PL.fsync();
 
 				// start the second thread
 				processPhase2(trans_ID);
@@ -226,15 +237,28 @@ public class Server implements ProjectLib.CommitServing {
 						// mark: use locks for each transaction's commit done operation?
 						// all received
 						if (userList.size() == 0) {
-							// TODO: mark this transcation as all done
+							// mark this transcation as done
+							if (trans_status.containsKey(trans_ID)) {
+								trans_status.put(trans_ID, "transDone");
+							}
+							else {
+								System.out.println( "Error: cannot find this transaction.");
+							}
 
-							System.out.println( "Server: Got all ack, transaction " + trans_ID +
-																					 " done." );
+							// write log after all finished
+							RandomAccessFile writer = new RandomAccessFile("server.log", "rw");
+							String log_line = Integer.toString(trans_ID) + ":transDone\n";
+							writer.write(log_line.getBytes());
+							writer.flush();
+							writer.close();
+							PL.fsync();
+
+							System.out.println( "Server: Got all ack, transaction " 
+																	+ trans_ID + " done." );
 			
 							// terminate the thread
 							return;
 						}
-						// sleep for some time?
 					}
 				}
 			}
@@ -242,16 +266,106 @@ public class Server implements ProjectLib.CommitServing {
 	}
 
 	/*
+	 * continuePhase1: Continue the first phase from server interuption.
+	 */
+	// TODO: improve modularity, remove repeated code
+	public static void continuePhase1( int trans_ID ) {
+		MyMessage attri = trans_attri.get(trans_ID);
+		HashMap<String, ArrayList<String>> contributers = attri.contributers;
+
+		// cannot fully recover, abort the transaction
+		attri.decision = "cancel";
+		trans_attri.put(trans_ID, attri);
+
+		// if the composite image was saved, delete it
+		File pic = new File(attri.filename);
+		if (pic.exists() && (!pic.delete())) {
+			System.out.println( "Error: delete composite image failed.");
+		}
+
+		// mark all acks as unreceived
+		ArrayList<String> userList = new ArrayList<String>();
+		for (Map.Entry<String, ArrayList<String>> entry : contributers.entrySet()) {
+			userList.add(entry.getKey());
+		}
+
+		trans_unrevACK.put(trans_ID, userList);
+
+		// mark the transaction as phase 2
+		if (trans_status.containsKey(trans_ID)) {
+			trans_status.put(trans_ID, "startPhase2");
+		}
+		else {
+			System.out.println( "Error: cannot find this transaction.");
+		}
+		
+		// write log before phase 2
+		RandomAccessFile writer = new RandomAccessFile("server.log", "rw");
+		String log_line = Integer.toString(trans_ID) + ":startPhase2\n";
+		writer.write(log_line.getBytes());
+		writer.flush();
+		writer.close();
+		PL.fsync();
+
+		// start the second thread
+		processPhase2(trans_ID);
+	}
+
+	/*
+	 * recovery: Every time the server restart, check the log file and execute any 
+	 * 			 interrupted operations (in phase 1 or 2).
+	 */
+	public static synchronized void recovery() {
+		// check if log file exist
+		File f_log = new File("server.log");
+		if (log.exists()) {
+			// read from the log
+			BufferedInputStream reader = new 
+			BufferedInputStream(new FileInputStream("server.log"));
+
+			byte buffer[] = new byte[(int) f_log.length()];
+			reader.read(buffer);
+			reader.close();
+
+			String[] parsed_log = new String(buffer).split("\n");
+			String status;
+			int trans_ID;
+		
+			// update trans status
+			for (int i = 0; i < parsed_log.length; i++) {
+				trans_ID = parsed_log[i].split(":")[0];
+				status = parsed_log[i].split(":")[1];
+				trans_status.put(trans_ID, status);
+			}
+
+			// If any transaction is interrupted during phase 1 or 2, continue process
+			for (Map.Entry<Integer, String> entry : trans_status.entrySet()) {
+				trans_ID = entry.getKey();
+				status = entry.getValue();
+				if (status.equals("startPhase1")) {
+					continuePhase1(trans_ID);
+				}
+				else if (status.equals("startPhase2")) {
+					// redo phase 2
+					processPhase2(trans_ID);
+				}
+			}
+		}
+	}
+
+	/*
 	 * handleMessage: Handle a message received by the server.
 	 */
 	public static synchronized void handleMessage( ProjectLib.Message msg ) {
 		String msg_body = new String(msg.body);
-		//System.out.println( "Server: A " + msg_body + " message come from " + msg.addr );
 
 		MyMessage mmsg = (MyMessage) msg;
 		int trans_ID = mmsg.trans_ID;
 
-		// TODO: if the transaction is already finished, do nothing
+		// if the transaction is already finished, do nothing
+		if (trans_status.get(trans_ID).equals("transDone")) {
+			return;
+		}
 
 		MyMessage attri = trans_attri.get(trans_ID);
 		String filename = attri.filename;
@@ -272,8 +386,8 @@ public class Server implements ProjectLib.CommitServing {
 				System.out.println( "Server: Got message notok from " + msg.addr );
 			}
 			else {
-				System.out.println("Error in voting: unexpected opinion type from " + msg.addr 
-																				+ " to Server");
+				System.out.println("Error in voting: unexpected opinion type from " 
+															+ msg.addr + " to Server");
 			}
 		}
 		// if it's a ack
@@ -289,8 +403,8 @@ public class Server implements ProjectLib.CommitServing {
 			System.out.println( "Server: Got ack from " + msg.addr );
 		}
 		else {
-			System.out.println("Error in handleMessage: unexpected message type from " + msg.addr 
-																			+ " to Server");
+			System.out.println("Error in handleMessage: unexpected message type from " 
+															+ msg.addr + " to Server");
 		}
 	}
 
@@ -298,6 +412,8 @@ public class Server implements ProjectLib.CommitServing {
 		if (args.length != 1) throw new Exception("Need 1 arg: <port>");
 		Server srv = new Server();
 		PL = new ProjectLib( Integer.parseInt(args[0]), srv );
+
+		recovery();
 		
 		// main loop
 		while (true) {

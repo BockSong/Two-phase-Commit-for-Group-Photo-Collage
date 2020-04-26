@@ -107,7 +107,8 @@ public class UserNode implements ProjectLib.MessageHandling {
 					File pic = new File(srcName);
 
 					if (!pic.delete()) {
-						System.out.println("Error: delete file failed from " + myId + "/" + srcName);
+						System.out.println("Error: delete file failed from " + myId + "/" 
+																				+ srcName);
 					}
 					else {
 						System.out.println( myId + ": " + srcName + " deleted successfully. " );
