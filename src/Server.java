@@ -43,6 +43,8 @@ public class Server implements ProjectLib.CommitServing {
 
 	// lock for accessing num_ID
 	private static Object ID_lock = new Object();
+
+	private static String log_name = "server.log";
 	
 	private static Boolean DEBUG = true; 
 
@@ -97,7 +99,7 @@ public class Server implements ProjectLib.CommitServing {
 		try {
 			// write log before phase 1
 			BufferedOutputStream writer = new
-			BufferedOutputStream(new FileOutputStream("server.log", true));
+			BufferedOutputStream(new FileOutputStream(log_name, true));
 			
 			String log_line = Integer.toString(trans_ID) + ":startPhase1\n";
 			writer.write(log_line.getBytes());
@@ -123,7 +125,7 @@ public class Server implements ProjectLib.CommitServing {
 
 			writer.flush();
 			writer.close();
-			//PL.fsync();
+			PL.fsync();
 			
 		} catch (Exception e) {
 			System.out.println( "I/O Error " + e.getMessage());
@@ -212,7 +214,7 @@ public class Server implements ProjectLib.CommitServing {
 				try {
 					// write log before phase 1
 					BufferedOutputStream writer = new
-					BufferedOutputStream(new FileOutputStream("server.log", true));
+					BufferedOutputStream(new FileOutputStream(log_name, true));
 					
 					String log_line = Integer.toString(trans_ID) + ":startPhase2\n";
 					writer.write(log_line.getBytes());
@@ -287,7 +289,7 @@ public class Server implements ProjectLib.CommitServing {
 							try {
 								// write log before phase 1
 								BufferedOutputStream writer = new
-								BufferedOutputStream(new FileOutputStream("server.log", true));
+								BufferedOutputStream(new FileOutputStream(log_name, true));
 								
 								String log_line = Integer.toString(trans_ID) + ":transDone\n";
 								writer.write(log_line.getBytes());
@@ -341,7 +343,7 @@ public class Server implements ProjectLib.CommitServing {
 		try {
 			// write log before phase 1
 			BufferedOutputStream writer = new
-			BufferedOutputStream(new FileOutputStream("server.log", true));
+			BufferedOutputStream(new FileOutputStream(log_name, true));
 			
 			String log_line = Integer.toString(trans_ID) + ":startPhase2\n";
 			writer.write(log_line.getBytes());
@@ -368,7 +370,7 @@ public class Server implements ProjectLib.CommitServing {
 	 */
 	public static synchronized void recovery() {
 		// check if log file exist
-		File f_log = new File("server.log");
+		File f_log = new File(log_name);
 		if (f_log.exists()) {
 			System.out.println( "Server: find log, start recovery. " );
 
@@ -377,7 +379,7 @@ public class Server implements ProjectLib.CommitServing {
 			try {
 				// read from the log
 				BufferedInputStream reader = new 
-				BufferedInputStream(new FileInputStream("server.log"));
+				BufferedInputStream(new FileInputStream(log_name));
 
 				reader.read(buffer);
 				reader.close();
@@ -513,6 +515,7 @@ public class Server implements ProjectLib.CommitServing {
 		if (args.length != 1) throw new Exception("Need 1 arg: <port>");
 		Server srv = new Server();
 		PL = new ProjectLib( Integer.parseInt(args[0]), srv );
+		System.out.println( "Server initialized. " );
 
 		recovery();
 		
