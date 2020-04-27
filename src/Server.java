@@ -123,7 +123,7 @@ public class Server implements ProjectLib.CommitServing {
 
 			writer.flush();
 			writer.close();
-			PL.fsync();
+			//PL.fsync();
 			
 		} catch (Exception e) {
 			System.out.println( "I/O Error " + e.getMessage());
