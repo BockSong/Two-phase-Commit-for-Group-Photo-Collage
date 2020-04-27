@@ -11,6 +11,7 @@
 
 import java.io.*;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.*;
@@ -64,7 +65,7 @@ public class Server implements ProjectLib.CommitServing {
 	 * 			 filename"
 	 */
 	public synchronized void startCommit( String filename, byte[] img, String[] sources ) {
-		System.out.println( "Server: Got request to commit "+filename );
+		System.out.println( "Server: Got request to commit " + filename );
 		
 		ProjectLib.Message mmsg;
 		int i, vote, trans_ID;
@@ -93,13 +94,41 @@ public class Server implements ProjectLib.CommitServing {
 		// initiates a 2PC transaction
 		trans_status.put(trans_ID, "startPhase1");
 
-		// write log before phase 1
-		RandomAccessFile writer = new RandomAccessFile("server.log", "rw");
-		String log_line = Integer.toString(trans_ID) + ":startPhase1\n";
-		writer.write(log_line.getBytes());
-		writer.flush();
-		writer.close();
-		PL.fsync();
+		try {
+			// write log before phase 1
+			BufferedOutputStream writer = new
+			BufferedOutputStream(new FileOutputStream("server.log", true));
+			
+			String log_line = Integer.toString(trans_ID) + ":startPhase1\n";
+			writer.write(log_line.getBytes());
+
+			// write filename
+			writer.write((filename + "\n").getBytes());
+
+			// write contributors
+			log_line = "";
+			for (Map.Entry<String, ArrayList<String>> entry : contributers.entrySet()) {
+				log_line += entry.getKey() + "@";
+				for (i = 0; i < entry.getValue().size(); i++) {
+					log_line += entry.getValue().get(i);
+					if (i != entry.getValue().size() - 1) {
+						log_line += ",";
+					}
+				}
+				log_line += " ";
+			}
+			log_line += "\n";
+	
+			writer.write(log_line.getBytes());
+
+			writer.flush();
+			writer.close();
+			PL.fsync();
+			
+		} catch (Exception e) {
+			System.out.println( "I/O Error " + e.getMessage());
+			e.printStackTrace();
+		}
 
 		// send prepare messages containing srcNames, image and sources
 		for (Map.Entry<String, ArrayList<String>> entry : contributers.entrySet()) {
@@ -151,7 +180,7 @@ public class Server implements ProjectLib.CommitServing {
 								System.out.println( "Server: successfully save the image. " );
 	
 							} catch (Exception e) {
-								System.out.println( "I/O Error in saving the images. " );
+								System.out.println( "Error: I/O exception in saving the images. " );
 							}
 						}
 						// cancelled
@@ -172,14 +201,6 @@ public class Server implements ProjectLib.CommitServing {
 				attri.decision = decision;
 				trans_attri.put(trans_ID, attri);
 
-				// go into the next phase, mark all acks as unreceived
-				ArrayList<String> userList = new ArrayList<String>();
-				for (Map.Entry<String, ArrayList<String>> entry : contributers.entrySet()) {
-					userList.add(entry.getKey());
-				}
-
-				trans_unrevACK.put(trans_ID, userList);
-
 				// mark the transaction as phase 2
 				if (trans_status.containsKey(trans_ID)) {
 					trans_status.put(trans_ID, "startPhase2");
@@ -188,13 +209,25 @@ public class Server implements ProjectLib.CommitServing {
 					System.out.println( "Error: cannot find this transaction.");
 				}
 				
-				// write log before phase 2
-				RandomAccessFile writer = new RandomAccessFile("server.log", "rw");
-				String log_line = Integer.toString(trans_ID) + ":startPhase2\n";
-				writer.write(log_line.getBytes());
-				writer.flush();
-				writer.close();
-				PL.fsync();
+				try {
+					// write log before phase 1
+					BufferedOutputStream writer = new
+					BufferedOutputStream(new FileOutputStream("server.log", true));
+					
+					String log_line = Integer.toString(trans_ID) + ":startPhase2\n";
+					writer.write(log_line.getBytes());
+
+					// write decision
+					writer.write((decision + "\n").getBytes());
+		
+					writer.flush();
+					writer.close();
+					//PL.fsync();
+					
+				} catch (Exception e) {
+					System.out.println( "I/O Error " + e.getMessage());
+					e.printStackTrace();
+				}
 
 				// start the second thread
 				processPhase2(trans_ID);
@@ -216,8 +249,14 @@ public class Server implements ProjectLib.CommitServing {
 				HashMap<String, ArrayList<String>> contributers = attri.contributers;
 				int num_src = contributers.size();
 				
+				// mark all acks as unreceived
+				ArrayList<String> userList = new ArrayList<String>();
+				for (Map.Entry<String, ArrayList<String>> entry : contributers.entrySet()) {
+					userList.add(entry.getKey());
+				}
+				trans_unrevACK.put(trans_ID, userList);
+
 				// repeat until get ack from all involved users
-				ArrayList<String> userList = trans_unrevACK.get(trans_ID);
 				while (userList.size() != 0) {
 					// inform the decision to all unreceived and involved UserNodes
 					for (String userID: userList) {
@@ -245,14 +284,22 @@ public class Server implements ProjectLib.CommitServing {
 								System.out.println( "Error: cannot find this transaction.");
 							}
 
-							// write log after all finished
-							RandomAccessFile writer = new RandomAccessFile("server.log", "rw");
-							String log_line = Integer.toString(trans_ID) + ":transDone\n";
-							writer.write(log_line.getBytes());
-							writer.flush();
-							writer.close();
-							PL.fsync();
-
+							try {
+								// write log before phase 1
+								BufferedOutputStream writer = new
+								BufferedOutputStream(new FileOutputStream("server.log", true));
+								
+								String log_line = Integer.toString(trans_ID) + ":transDone\n";
+								writer.write(log_line.getBytes());
+								writer.flush();
+								writer.close();
+								//PL.fsync();
+								
+							} catch (Exception e) {
+								System.out.println( "I/O Error " + e.getMessage());
+								e.printStackTrace();
+							}
+					
 							System.out.println( "Server: Got all ack, transaction " 
 																	+ trans_ID + " done." );
 			
@@ -283,14 +330,6 @@ public class Server implements ProjectLib.CommitServing {
 			System.out.println( "Error: delete composite image failed.");
 		}
 
-		// mark all acks as unreceived
-		ArrayList<String> userList = new ArrayList<String>();
-		for (Map.Entry<String, ArrayList<String>> entry : contributers.entrySet()) {
-			userList.add(entry.getKey());
-		}
-
-		trans_unrevACK.put(trans_ID, userList);
-
 		// mark the transaction as phase 2
 		if (trans_status.containsKey(trans_ID)) {
 			trans_status.put(trans_ID, "startPhase2");
@@ -299,13 +338,25 @@ public class Server implements ProjectLib.CommitServing {
 			System.out.println( "Error: cannot find this transaction.");
 		}
 		
-		// write log before phase 2
-		RandomAccessFile writer = new RandomAccessFile("server.log", "rw");
-		String log_line = Integer.toString(trans_ID) + ":startPhase2\n";
-		writer.write(log_line.getBytes());
-		writer.flush();
-		writer.close();
-		PL.fsync();
+		try {
+			// write log before phase 1
+			BufferedOutputStream writer = new
+			BufferedOutputStream(new FileOutputStream("server.log", true));
+			
+			String log_line = Integer.toString(trans_ID) + ":startPhase2\n";
+			writer.write(log_line.getBytes());
+
+			// write decision
+			writer.write((attri.decision + "\n").getBytes());
+
+			writer.flush();
+			writer.close();
+			//PL.fsync();
+			
+		} catch (Exception e) {
+			System.out.println( "I/O Error " + e.getMessage());
+			e.printStackTrace();
+		}
 
 		// start the second thread
 		processPhase2(trans_ID);
@@ -318,35 +369,85 @@ public class Server implements ProjectLib.CommitServing {
 	public static synchronized void recovery() {
 		// check if log file exist
 		File f_log = new File("server.log");
-		if (log.exists()) {
-			// read from the log
-			BufferedInputStream reader = new 
-			BufferedInputStream(new FileInputStream("server.log"));
+		if (f_log.exists()) {
+			System.out.println( "Server: find log, start recovery. " );
 
 			byte buffer[] = new byte[(int) f_log.length()];
-			reader.read(buffer);
-			reader.close();
+
+			try {
+				// read from the log
+				BufferedInputStream reader = new 
+				BufferedInputStream(new FileInputStream("server.log"));
+
+				reader.read(buffer);
+				reader.close();
+				
+			} catch (Exception e) {
+				System.out.println( "I/O Error " + e.getMessage());
+				e.printStackTrace();
+			}
 
 			String[] parsed_log = new String(buffer).split("\n");
-			String status;
-			int trans_ID;
+			String status, filename, decision;
+			int trans_ID, max_transID = 0;
+			HashMap<String, ArrayList<String>> contributers = new HashMap<>();
 		
-			// update trans status
+			// update trans status and other data structures
 			for (int i = 0; i < parsed_log.length; i++) {
-				trans_ID = parsed_log[i].split(":")[0];
+				trans_ID = Integer.parseInt(parsed_log[i].split(":")[0]);
 				status = parsed_log[i].split(":")[1];
 				trans_status.put(trans_ID, status);
+
+				if (trans_ID > max_transID) {
+					max_transID = trans_ID;
+				}
+
+				if (status.equals("startPhase1")) {
+					filename = parsed_log[i + 1];
+
+					// parse contributors
+					String[] raw_contri = parsed_log[i + 2].split(" ");
+					for (int j = 0; j < raw_contri.length; j++) {
+						String srcID = raw_contri[j].split("@")[0];
+						String[] srcName = raw_contri[j].split("@")[1].split(",");
+
+						contributers.put( srcID, new ArrayList<String>(Arrays.asList(srcName)) );
+					}
+
+					// save recovered attributes to global structure
+					MyMessage attri = new MyMessage("Server", "local".getBytes(), trans_ID, filename, 
+					null, contributers);
+					trans_attri.put(trans_ID, attri);
+
+					i += 2;
+				}
+				else if (status.equals("startPhase2")) {
+					decision = parsed_log[i + 1];
+					// attri structure should be recovered in previous line
+					MyMessage attri = trans_attri.get(trans_ID);
+					attri.decision = decision;
+					trans_attri.put(trans_ID, attri);
+
+					i += 1;
+				}
 			}
+
+			// resume trans ID count
+			num_ID = max_transID;
 
 			// If any transaction is interrupted during phase 1 or 2, continue process
 			for (Map.Entry<Integer, String> entry : trans_status.entrySet()) {
 				trans_ID = entry.getKey();
 				status = entry.getValue();
 				if (status.equals("startPhase1")) {
+					System.out.println( "Server: continue phase 1. " );
 					continuePhase1(trans_ID);
 				}
 				else if (status.equals("startPhase2")) {
+					// TODO: recover necessary data structure
+
 					// redo phase 2
+					System.out.println( "Server: continue phase 2. " );
 					processPhase2(trans_ID);
 				}
 			}
