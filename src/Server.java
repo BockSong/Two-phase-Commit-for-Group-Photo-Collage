@@ -43,6 +43,8 @@ public class Server implements ProjectLib.CommitServing {
 
 	// lock for accessing num_ID
 	private static Object ID_lock = new Object();
+	// lock for accessing votes
+	private static Object vote_lock = new Object();
 
 	private static String log_name = "server.log";
 	
@@ -164,38 +166,37 @@ public class Server implements ProjectLib.CommitServing {
 
 				// init timestamp for phase 1
 				long startTime = System.currentTimeMillis();
-				String decision;	
+				String decision = "undecided";	
 
 				// keeping check if timeout or receive all
-				while (true) {
-					// mark: use locks for each transaction's commit done operation?
-					// (in case 2 consecutive msg both trigger commit)
-					if (trans_votes.get(trans_ID) == num_src) {
-						// apporved
-						if (trans_okvotes.get(trans_ID) == num_src){
-							decision = "done";
-				
-							try {
-								// save the composite image in the Server directory
-								RandomAccessFile writer = new RandomAccessFile(filename, "rw");
-								writer.write(img);
-								System.out.println( "Server: successfully save the image. " );
-	
-							} catch (Exception e) {
-								System.out.println( "Server: Error in saving the images." );
+				while (decision.equals("undecided")) {
+					// use lock to avoid race condition in accessing votes
+					synchronized (vote_lock) {
+						if (trans_votes.get(trans_ID) == num_src) {
+							// apporved
+							if (trans_okvotes.get(trans_ID) == num_src){
+								decision = "done";
+							}
+							// cancelled
+							else {
+								decision = "cancel";
 							}
 						}
-						// cancelled
-						else {
-							decision = "cancel";
+						// timeout
+						else if (System.currentTimeMillis() - startTime > TIMEOUT_TH) {
+							decision = "cancel"; // abort for timeout
 						}
-						
-						break;
 					}
-					// timeout
-					else if (System.currentTimeMillis() - startTime > TIMEOUT_TH) {
-						decision = "cancel"; // abort for timeout
-						break;
+					if (decision.equals("done")) {
+						try {
+							// save the composite image in the Server directory
+							RandomAccessFile writer = new RandomAccessFile(filename, "rw");
+							writer.write(img);
+							System.out.println( "Server: successfully save the image. " );
+
+						} catch (Exception e) {
+							System.out.println( "Server: Error in saving the images." );
+						}
 					}
 				}
 
@@ -477,19 +478,20 @@ public class Server implements ProjectLib.CommitServing {
 		// if it's a opinion message
 		if (msg_body.equals("opinion")) {
 			// update votes
-			trans_votes.put(trans_ID, trans_votes.get(trans_ID) + 1);
-			
-			// TODO: fix the race condition here
-			if (mmsg.opinion.equals("ok")) {
-				trans_okvotes.put(trans_ID, trans_okvotes.get(trans_ID) + 1);
-				System.out.println( "Server: Got message ok from " + msg.addr );
-			}
-			else if (mmsg.opinion.equals("notok")) {
-				System.out.println( "Server: Got message notok from " + msg.addr );
-			}
-			else {
-				System.out.println("Error in voting: unexpected opinion type from " 
-															+ msg.addr + " to Server");
+			synchronized (vote_lock) {
+				trans_votes.put(trans_ID, trans_votes.get(trans_ID) + 1);
+				
+				if (mmsg.opinion.equals("ok")) {
+					trans_okvotes.put(trans_ID, trans_okvotes.get(trans_ID) + 1);
+					System.out.println( "Server: Got message ok from " + msg.addr );
+				}
+				else if (mmsg.opinion.equals("notok")) {
+					System.out.println( "Server: Got message notok from " + msg.addr );
+				}
+				else {
+					System.out.println("Error in voting: unexpected opinion type from " 
+																+ msg.addr + " to Server");
+				}
 			}
 		}
 		// if it's a ack
