@@ -30,7 +30,6 @@ public class Server implements ProjectLib.CommitServing {
 	// map existing transaction ID with some attributes contained in the message
 	private static ConcurrentHashMap<Integer, MyMessage> trans_attri = new 
 							ConcurrentHashMap<Integer, MyMessage>();
-	// TODO: move these into attri
 	// store the number received votes corresponding to transaction ID
 	private static ConcurrentHashMap<Integer, Integer> trans_votes = new 
 							ConcurrentHashMap<Integer, Integer>();
@@ -47,8 +46,7 @@ public class Server implements ProjectLib.CommitServing {
 	private static Object vote_lock = new Object();
 
 	private static String log_name = "server.log";
-	
-	private static Boolean DEBUG = true; 
+	private static Boolean DEBUG = false; 
 
 	/*
 	 * get_ID: generate an sequence of positive integer ID for each transaction.
@@ -69,7 +67,7 @@ public class Server implements ProjectLib.CommitServing {
 	 * 			 filename"
 	 */
 	public synchronized void startCommit( String filename, byte[] img, String[] sources ) {
-		System.out.println( "Server: Got request to commit " + filename );
+		if (DEBUG)  System.out.println( "Server: Got request to commit " + filename );
 		
 		ProjectLib.Message mmsg;
 		int i, vote, trans_ID;
@@ -94,7 +92,6 @@ public class Server implements ProjectLib.CommitServing {
 																	img, contributers);
 		trans_attri.put(trans_ID, attri);
 
-		// assume the above process succeed
 		// initiates a 2PC transaction
 		trans_status.put(trans_ID, "startPhase1");
 
@@ -109,7 +106,7 @@ public class Server implements ProjectLib.CommitServing {
 			// write filename
 			writer.write((filename + "\n").getBytes());
 
-			// write contributors
+			// write contributors. format is explained in the design doc
 			log_line = "";
 			for (Map.Entry<String, ArrayList<String>> entry : contributers.entrySet()) {
 				log_line += entry.getKey() + "@";
@@ -130,7 +127,7 @@ public class Server implements ProjectLib.CommitServing {
 			PL.fsync();
 			
 		} catch (Exception e) {
-			System.out.println( "I/O Error " + e.getMessage());
+			System.err.println( "Server: Error " + e.getMessage());
 			e.printStackTrace();
 		}
 
@@ -138,7 +135,7 @@ public class Server implements ProjectLib.CommitServing {
 		for (Map.Entry<String, ArrayList<String>> entry : contributers.entrySet()) {
 			mmsg = new MyMessage(entry.getKey(), "prepare".getBytes(), trans_ID, 
 														entry.getValue(), img, sources);
-			System.out.println( "Server: Sending prepare message to " + entry.getKey() );
+			if (DEBUG)  System.out.println( "Server: Sending prepare message to " + entry.getKey() );
 			PL.sendMessage(mmsg);
 		}
 
@@ -184,7 +181,7 @@ public class Server implements ProjectLib.CommitServing {
 						}
 						// timeout
 						else if (System.currentTimeMillis() - startTime > TIMEOUT_TH) {
-							decision = "cancel"; // abort for timeout
+							decision = "cancel"; // this is an abort for timeout
 						}
 					}
 					if (decision.equals("done")) {
@@ -192,10 +189,11 @@ public class Server implements ProjectLib.CommitServing {
 							// save the composite image in the Server directory
 							RandomAccessFile writer = new RandomAccessFile(filename, "rw");
 							writer.write(img);
-							System.out.println( "Server: successfully save the image. " );
+							if (DEBUG)  
+								System.out.println( "Server: successfully save the image. " );
 
 						} catch (Exception e) {
-							System.out.println( "Server: Error in saving the images." );
+							System.err.println( "Server: Error in saving the images." );
 						}
 					}
 				}
@@ -209,7 +207,7 @@ public class Server implements ProjectLib.CommitServing {
 					trans_status.put(trans_ID, "startPhase2");
 				}
 				else {
-					System.out.println( "Server: Error, cannot find this transaction.");
+					System.err.println( "Server: Error, cannot find this transaction.");
 				}
 				
 				try {
@@ -228,7 +226,7 @@ public class Server implements ProjectLib.CommitServing {
 					PL.fsync();
 					
 				} catch (Exception e) {
-					System.out.println( "I/O Error " + e.getMessage());
+					System.err.println( "Server: Error " + e.getMessage());
 					e.printStackTrace();
 				}
 
@@ -265,7 +263,8 @@ public class Server implements ProjectLib.CommitServing {
 					for (String userID: userList) {
 						MyMessage mmsg = new MyMessage(userID, "decision".getBytes(), 
 									trans_ID, contributers.get(userID), decision, filename);
-						System.out.println( "Server: Sending decision of \"" + decision + 
+						if (DEBUG)  
+							System.out.println( "Server: Sending decision of \"" + decision + 
 																"\" to " + userID );
 						PL.sendMessage(mmsg);
 					}
@@ -276,7 +275,6 @@ public class Server implements ProjectLib.CommitServing {
 					// keeping check if timeout or receive all
 					while (System.currentTimeMillis() - startTime <= TIMEOUT_TH) {
 						userList = trans_unrevACK.get(trans_ID);
-						// mark: use locks for each transaction's commit done operation?
 						// all received
 						if (userList.size() == 0) {
 							// mark this transcation as done
@@ -284,7 +282,7 @@ public class Server implements ProjectLib.CommitServing {
 								trans_status.put(trans_ID, "transDone");
 							}
 							else {
-								System.out.println( "Server: Error, cannot find this transaction.");
+								System.err.println( "Server: Error cannot find this transaction.");
 							}
 
 							try {
@@ -299,11 +297,11 @@ public class Server implements ProjectLib.CommitServing {
 								PL.fsync();
 								
 							} catch (Exception e) {
-								System.out.println( "I/O Error " + e.getMessage());
+								System.err.println( "Server: Error " + e.getMessage());
 								e.printStackTrace();
 							}
 					
-							System.out.println( "Server: Got all ack, transaction " 
+							if (DEBUG)  System.out.println( "Server: Got all ack, transaction " 
 																	+ trans_ID + " done." );
 			
 							// terminate the thread
@@ -329,7 +327,7 @@ public class Server implements ProjectLib.CommitServing {
 		// if the composite image was saved, delete it
 		File pic = new File(attri.filename);
 		if (pic.exists() && (!pic.delete())) {
-			System.out.println( "Server: Error, delete composite image failed.");
+			System.err.println( "Server: Error delete composite image failed.");
 		}
 
 		// mark the transaction as phase 2
@@ -337,7 +335,7 @@ public class Server implements ProjectLib.CommitServing {
 			trans_status.put(trans_ID, "startPhase2");
 		}
 		else {
-			System.out.println( "Server: Error, cannot find this transaction.");
+			System.err.println( "Server: Error cannot find this transaction.");
 		}
 		
 		try {
@@ -356,11 +354,11 @@ public class Server implements ProjectLib.CommitServing {
 			PL.fsync();
 			
 		} catch (Exception e) {
-			System.out.println( "I/O Error " + e.getMessage());
+			System.err.println( "Server: Error " + e.getMessage());
 			e.printStackTrace();
 		}
 
-		// start the second thread
+		// start another thread
 		processPhase2(trans_ID);
 	}
 
@@ -372,7 +370,7 @@ public class Server implements ProjectLib.CommitServing {
 		// check if log file exist
 		File f_log = new File(log_name);
 		if (f_log.exists()) {
-			System.out.println( "Server: find log, start recovery. " );
+			if (DEBUG)  System.out.println( "Server: find log, start recovery. " );
 
 			byte buffer[] = new byte[(int) f_log.length()];
 
@@ -385,7 +383,7 @@ public class Server implements ProjectLib.CommitServing {
 				reader.close();
 				
 			} catch (Exception e) {
-				System.out.println( "I/O Error " + e.getMessage());
+				System.err.println( "Server: Error " + e.getMessage());
 				e.printStackTrace();
 			}
 
@@ -422,6 +420,7 @@ public class Server implements ProjectLib.CommitServing {
 																filename, null, contributers);
 					trans_attri.put(trans_ID, attri);
 
+					// these two lines have been parsed
 					i += 2;
 				}
 				else if (status.equals("startPhase2")) {
@@ -431,6 +430,7 @@ public class Server implements ProjectLib.CommitServing {
 					attri.decision = decision;
 					trans_attri.put(trans_ID, attri);
 
+					// this line has been parsed
 					i += 1;
 				}
 			}
@@ -443,12 +443,12 @@ public class Server implements ProjectLib.CommitServing {
 				trans_ID = entry.getKey();
 				status = entry.getValue();
 				if (status.equals("startPhase1")) {
-					System.out.println( "Server: continue phase 1. " );
+					if (DEBUG)  System.out.println( "Server: continue phase 1. " );
 					continuePhase1(trans_ID);
 				}
 				else if (status.equals("startPhase2")) {
 					// redo phase 2
-					System.out.println( "Server: continue phase 2. " );
+					if (DEBUG)  System.out.println( "Server: continue phase 2. " );
 					processPhase2(trans_ID);
 				}
 			}
@@ -483,14 +483,14 @@ public class Server implements ProjectLib.CommitServing {
 				
 				if (mmsg.opinion.equals("ok")) {
 					trans_okvotes.put(trans_ID, trans_okvotes.get(trans_ID) + 1);
-					System.out.println( "Server: Got message ok from " + msg.addr );
+					if (DEBUG)  System.out.println( "Server: Got message ok from " + msg.addr );
 				}
 				else if (mmsg.opinion.equals("notok")) {
-					System.out.println( "Server: Got message notok from " + msg.addr );
+					if (DEBUG)  System.out.println( "Server: Got message notok from " + msg.addr );
 				}
 				else {
-					System.out.println("Error in voting: unexpected opinion type from " 
-																+ msg.addr + " to Server");
+					System.err.println("Error in voting: unexpected opinion type from " 
+															+ msg.addr + " to Server");
 				}
 			}
 		}
@@ -504,10 +504,10 @@ public class Server implements ProjectLib.CommitServing {
 					break;
 				}
 			}
-			System.out.println( "Server: Got ack from " + msg.addr );
+			if (DEBUG)  System.out.println( "Server: Got ack from " + msg.addr );
 		}
 		else {
-			System.out.println("Error in handleMessage: unexpected message type from " 
+			System.err.println("Error in handleMessage: unexpected message type from " 
 															+ msg.addr + " to Server");
 		}
 	}
@@ -516,7 +516,7 @@ public class Server implements ProjectLib.CommitServing {
 		if (args.length != 1) throw new Exception("Need 1 arg: <port>");
 		Server srv = new Server();
 		PL = new ProjectLib( Integer.parseInt(args[0]), srv );
-		System.out.println( "Server initialized. " );
+		if (DEBUG)  System.out.println( "Server initialized. " );
 
 		recovery();
 		

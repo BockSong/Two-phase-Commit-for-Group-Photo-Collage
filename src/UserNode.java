@@ -5,7 +5,7 @@
  *
  * UserNode.java 
  * 
- * The usernode (client) class for two-phase commit for group photo collage.
+ * The UserNode class for two-phase commit for group photo collage.
  * 
  */
 
@@ -19,7 +19,7 @@ public class UserNode implements ProjectLib.MessageHandling {
 	public static String myId;
 	public static ProjectLib PL;
 	private static String log_name = "user.log";
-	// map all existing transaction ID with their status (if finished)
+	// map all existing transaction ID with their status (if it is finished)
 	private static ConcurrentHashMap<Integer, Boolean> trans_status = new 
 							ConcurrentHashMap<Integer, Boolean>();
 	// store <srcPath, trans_ID> pairs for exclusive access to every occupied files
@@ -29,12 +29,14 @@ public class UserNode implements ProjectLib.MessageHandling {
 	// lock for read and then modify file lock
 	private static Object rw_lock = new Object();
 	
+	private static Boolean DEBUG = false; 
+
 	public UserNode( String id ) {
 		myId = id;
 	}
 
 	/*
-	 * get_opinion: get the reponse for a prepare message from the server.
+	 * get_opinion: get the opinon (ok or notok) for a prepare message from the server.
 	 */
 	private synchronized static String get_opinion(MyMessage mmsg) {
 		for (String srcName: mmsg.srcNames) {
@@ -64,10 +66,9 @@ public class UserNode implements ProjectLib.MessageHandling {
 				writer.write(log_line.getBytes());
 				writer.flush();
 				writer.close();
-				//PL.fsync();
 				
 			} catch (Exception e) {
-				System.out.println( "I/O Error " + e.getMessage());
+				System.err.println( "I/O Error " + e.getMessage());
 				e.printStackTrace();
 			}
 		}
@@ -89,7 +90,7 @@ public class UserNode implements ProjectLib.MessageHandling {
 	 */
 	public synchronized boolean deliverMessage( ProjectLib.Message msg ) {
 		String msg_body = new String(msg.body);
-		System.out.println( myId + ": Got message " + msg_body );
+		if (DEBUG)  System.out.println( myId + ": Got message " + msg_body );
 
 		MyMessage mmsg = (MyMessage) msg;
 		int trans_ID = mmsg.trans_ID;
@@ -99,7 +100,7 @@ public class UserNode implements ProjectLib.MessageHandling {
 		if (msg_body.equals("prepare")) {
 			// If has handled this message before, skip it
 			if (trans_status.containsKey(trans_ID)) {
-				System.out.println( myId + ": Do nothing to the resend message. ");
+				if (DEBUG)  System.out.println( myId + ": Do nothing to the resend message. ");
 				return true;
 			}
 
@@ -130,7 +131,7 @@ public class UserNode implements ProjectLib.MessageHandling {
 
 			// send the reply
 			mmsg = new MyMessage("Server", "opinion".getBytes(), trans_ID, opinion);
-			System.out.println( myId + ": Sending opinion of " + opinion );
+			if (DEBUG)  System.out.println( myId + ": Sending opinion of " + opinion );
 			PL.sendMessage(mmsg);
 		}
 		// if it's a decision
@@ -142,10 +143,11 @@ public class UserNode implements ProjectLib.MessageHandling {
 					File pic = new File(srcName);
 
 					if (!pic.delete()) {
-						System.out.println(myId + ": Error, delete image failed " + srcName);
+						System.err.println(myId + ": Error delete image failed " + srcName);
 					}
 					else {
-						System.out.println( myId + ": " + srcName + " deleted successfully. " );
+						if (DEBUG)  System.out.println( myId + ": " + srcName + 
+																" deleted successfully. " );
 					}
 				}
 
@@ -163,15 +165,14 @@ public class UserNode implements ProjectLib.MessageHandling {
 						writer.write(log_line.getBytes());
 						writer.flush();
 						writer.close();
-						//PL.fsync();
 						
 					} catch (Exception e) {
-						System.out.println( "I/O Error " + e.getMessage());
+						System.err.println( "I/O Error " + e.getMessage());
 						e.printStackTrace();
 					}
 				}
 				else {
-					System.out.println( myId + ":Error, cannot find this transaction.");
+					System.err.println( myId + ": Error, cannot find this transaction.");
 				}
 	
 				// unlock occupied resources
@@ -191,17 +192,15 @@ public class UserNode implements ProjectLib.MessageHandling {
 						writer.write(log_line.getBytes());
 						writer.flush();
 						writer.close();
-						//PL.fsync();
 						
 					} catch (Exception e) {
-						System.out.println( "I/O Error " + e.getMessage());
+						System.err.println( "I/O Error " + e.getMessage());
 						e.printStackTrace();
 					}
 				}
 			}
 			// decision of cancel
 			else if (mmsg.decision.equals("cancel")) {
-				// TODO: should we do it here, or earlier once askUser is false?
 				// cancel the transaction
 				if (trans_status.containsKey(trans_ID)) {
 					trans_status.remove(trans_ID);
@@ -216,10 +215,9 @@ public class UserNode implements ProjectLib.MessageHandling {
 						writer.write(log_line.getBytes());
 						writer.flush();
 						writer.close();
-						//PL.fsync();
 						
 					} catch (Exception e) {
-						System.out.println( "I/O Error " + e.getMessage());
+						System.err.println( "I/O Error " + e.getMessage());
 						e.printStackTrace();
 					}
 			
@@ -241,29 +239,28 @@ public class UserNode implements ProjectLib.MessageHandling {
 							writer.write(log_line.getBytes());
 							writer.flush();
 							writer.close();
-							//PL.fsync();
 							
 						} catch (Exception e) {
-							System.out.println( "I/O Error " + e.getMessage());
+							System.err.println( "I/O Error " + e.getMessage());
 							e.printStackTrace();
 						}
 					}
 				}
 				else {
-					System.out.println( myId + ": cancel decision re-received or prepare "
-																	+ "message missed.");
+					if (DEBUG)  System.out.println( myId + ": cancel decision re-received or"
+																+ " prepare message missed.");
 				}
 			}
 			else {
-				System.out.println(myId + ": Error, unexpected message type in " + msg.addr);
+				System.err.println(myId + ": Error, unexpected message type in " + msg.addr);
 			}
 			// send back ack
 			msg = new MyMessage("Server", "ack".getBytes(), trans_ID);
-			System.out.println( myId + ": Sending back ack for " + mmsg.decision );
+			if (DEBUG)  System.out.println( myId + ": Sending back ack for " + mmsg.decision );
 			PL.sendMessage(msg);
 		}
 		else {
-			System.out.println(myId + ": Error, unexpected message type in " + msg.addr);
+			System.err.println(myId + ": Error, unexpected message type in " + msg.addr);
 		}
 
 		return true;
@@ -276,7 +273,7 @@ public class UserNode implements ProjectLib.MessageHandling {
 		// check if log file exist
 		File f_log = new File(log_name);
 		if (f_log.exists()) {
-			System.out.println( myId + ": find log, start recovery. " );
+			if (DEBUG)  System.out.println( myId + ": find log, start recovery. " );
 
 			byte buffer[] = new byte[(int) f_log.length()];
 
@@ -289,7 +286,7 @@ public class UserNode implements ProjectLib.MessageHandling {
 				reader.close();
 				
 			} catch (Exception e) {
-				System.out.println( "I/O Error " + e.getMessage());
+				System.err.println( "I/O Error " + e.getMessage());
 				e.printStackTrace();
 			}
 
