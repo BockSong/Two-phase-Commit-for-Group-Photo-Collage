@@ -182,7 +182,7 @@ public class Server implements ProjectLib.CommitServing {
 								System.out.println( "Server: successfully save the image. " );
 	
 							} catch (Exception e) {
-								System.out.println( "Error: I/O exception in saving the images. " );
+								System.out.println( "Server: Error in saving the images." );
 							}
 						}
 						// cancelled
@@ -208,11 +208,11 @@ public class Server implements ProjectLib.CommitServing {
 					trans_status.put(trans_ID, "startPhase2");
 				}
 				else {
-					System.out.println( "Error: cannot find this transaction.");
+					System.out.println( "Server: Error, cannot find this transaction.");
 				}
 				
 				try {
-					// write log before phase 1
+					// write log before phase 2
 					BufferedOutputStream writer = new
 					BufferedOutputStream(new FileOutputStream(log_name, true));
 					
@@ -224,7 +224,7 @@ public class Server implements ProjectLib.CommitServing {
 		
 					writer.flush();
 					writer.close();
-					//PL.fsync();
+					PL.fsync();
 					
 				} catch (Exception e) {
 					System.out.println( "I/O Error " + e.getMessage());
@@ -283,7 +283,7 @@ public class Server implements ProjectLib.CommitServing {
 								trans_status.put(trans_ID, "transDone");
 							}
 							else {
-								System.out.println( "Error: cannot find this transaction.");
+								System.out.println( "Server: Error, cannot find this transaction.");
 							}
 
 							try {
@@ -295,7 +295,7 @@ public class Server implements ProjectLib.CommitServing {
 								writer.write(log_line.getBytes());
 								writer.flush();
 								writer.close();
-								//PL.fsync();
+								PL.fsync();
 								
 							} catch (Exception e) {
 								System.out.println( "I/O Error " + e.getMessage());
@@ -320,7 +320,6 @@ public class Server implements ProjectLib.CommitServing {
 	// TODO: improve modularity, remove repeated code
 	public static void continuePhase1( int trans_ID ) {
 		MyMessage attri = trans_attri.get(trans_ID);
-		HashMap<String, ArrayList<String>> contributers = attri.contributers;
 
 		// cannot fully recover, abort the transaction
 		attri.decision = "cancel";
@@ -329,7 +328,7 @@ public class Server implements ProjectLib.CommitServing {
 		// if the composite image was saved, delete it
 		File pic = new File(attri.filename);
 		if (pic.exists() && (!pic.delete())) {
-			System.out.println( "Error: delete composite image failed.");
+			System.out.println( "Server: Error, delete composite image failed.");
 		}
 
 		// mark the transaction as phase 2
@@ -337,7 +336,7 @@ public class Server implements ProjectLib.CommitServing {
 			trans_status.put(trans_ID, "startPhase2");
 		}
 		else {
-			System.out.println( "Error: cannot find this transaction.");
+			System.out.println( "Server: Error, cannot find this transaction.");
 		}
 		
 		try {
@@ -353,7 +352,7 @@ public class Server implements ProjectLib.CommitServing {
 
 			writer.flush();
 			writer.close();
-			//PL.fsync();
+			PL.fsync();
 			
 		} catch (Exception e) {
 			System.out.println( "I/O Error " + e.getMessage());
@@ -392,9 +391,8 @@ public class Server implements ProjectLib.CommitServing {
 			String[] parsed_log = new String(buffer).split("\n");
 			String status, filename, decision;
 			int trans_ID, max_transID = 0;
-			HashMap<String, ArrayList<String>> contributers = new HashMap<>();
 		
-			// update trans status and other data structures
+			// update trans status, filename and contributors
 			for (int i = 0; i < parsed_log.length; i++) {
 				trans_ID = Integer.parseInt(parsed_log[i].split(":")[0]);
 				status = parsed_log[i].split(":")[1];
@@ -407,6 +405,8 @@ public class Server implements ProjectLib.CommitServing {
 				if (status.equals("startPhase1")) {
 					filename = parsed_log[i + 1];
 
+					HashMap<String, ArrayList<String>> contributers = new HashMap<>();
+
 					// parse contributors
 					String[] raw_contri = parsed_log[i + 2].split(" ");
 					for (int j = 0; j < raw_contri.length; j++) {
@@ -417,8 +417,8 @@ public class Server implements ProjectLib.CommitServing {
 					}
 
 					// save recovered attributes to global structure
-					MyMessage attri = new MyMessage("Server", "local".getBytes(), trans_ID, filename, 
-					null, contributers);
+					MyMessage attri = new MyMessage("Server", "local".getBytes(), trans_ID, 
+																filename, null, contributers);
 					trans_attri.put(trans_ID, attri);
 
 					i += 2;
@@ -446,8 +446,6 @@ public class Server implements ProjectLib.CommitServing {
 					continuePhase1(trans_ID);
 				}
 				else if (status.equals("startPhase2")) {
-					// TODO: recover necessary data structure
-
 					// redo phase 2
 					System.out.println( "Server: continue phase 2. " );
 					processPhase2(trans_ID);
@@ -481,6 +479,7 @@ public class Server implements ProjectLib.CommitServing {
 			// update votes
 			trans_votes.put(trans_ID, trans_votes.get(trans_ID) + 1);
 			
+			// TODO: fix the race condition here
 			if (mmsg.opinion.equals("ok")) {
 				trans_okvotes.put(trans_ID, trans_okvotes.get(trans_ID) + 1);
 				System.out.println( "Server: Got message ok from " + msg.addr );

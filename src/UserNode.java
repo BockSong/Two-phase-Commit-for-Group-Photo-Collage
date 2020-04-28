@@ -142,8 +142,7 @@ public class UserNode implements ProjectLib.MessageHandling {
 					File pic = new File(srcName);
 
 					if (!pic.delete()) {
-						System.out.println("Error: delete file failed from " + myId + "/" 
-																				+ srcName);
+						System.out.println(myId + ": Error, delete image failed " + srcName);
 					}
 					else {
 						System.out.println( myId + ": " + srcName + " deleted successfully. " );
@@ -172,7 +171,7 @@ public class UserNode implements ProjectLib.MessageHandling {
 					}
 				}
 				else {
-					System.out.println( "Error: cannot find this transaction.");
+					System.out.println( myId + ":Error, cannot find this transaction.");
 				}
 	
 				// unlock occupied resources
@@ -256,7 +255,7 @@ public class UserNode implements ProjectLib.MessageHandling {
 				}
 			}
 			else {
-				System.out.println("Error: unexpected message type in " + msg.addr);
+				System.out.println(myId + ": Error, unexpected message type in " + msg.addr);
 			}
 			// send back ack
 			msg = new MyMessage("Server", "ack".getBytes(), trans_ID);
@@ -264,7 +263,7 @@ public class UserNode implements ProjectLib.MessageHandling {
 			PL.sendMessage(msg);
 		}
 		else {
-			System.out.println("Error: unexpected message type in " + msg.addr);
+			System.out.println(myId + ": Error, unexpected message type in " + msg.addr);
 		}
 
 		return true;
