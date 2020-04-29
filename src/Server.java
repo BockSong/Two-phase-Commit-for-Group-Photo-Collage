@@ -67,6 +67,32 @@ public class Server implements ProjectLib.CommitServing {
 	}
 
 	/*
+	 * write_log_status: write the status information to log before phase 2.
+	 */
+	private static void write_log_status(int trans_ID, Tstatus status, String decision) {
+		try {
+			// write log
+			BufferedOutputStream writer = new
+			BufferedOutputStream(new FileOutputStream(log_name, true));
+			
+			// format: <transaction_ID: transaction_status\n>
+			String log_line = Integer.toString(trans_ID) + ":" + status.toString() + "\n";
+			writer.write(log_line.getBytes());
+
+			// write decision
+			writer.write((decision + "\n").getBytes());
+
+			writer.flush();
+			writer.close();
+			PL.fsync();
+			
+		} catch (Exception e) {
+			System.err.println( "Server: Error " + e.getMessage());
+			e.printStackTrace();
+		}
+	}
+
+	/*
 	 * startCommit: This method is called when a new candidate collage has been
 	 * posted, and it should cause a new 2PC commit operation to begin.
 	 * @filename: Filename of the collage.
@@ -223,27 +249,8 @@ public class Server implements ProjectLib.CommitServing {
 					System.err.println( "Server: Error, cannot find this transaction.");
 				}
 				
-				try {
-					// write log before phase 2
-					BufferedOutputStream writer = new
-					BufferedOutputStream(new FileOutputStream(log_name, true));
-					
-					// format: <transaction_ID: transaction_status\n>
-					String log_line = Integer.toString(trans_ID) + ":" + 
-														Tstatus.startPhase2.toString() + "\n";
-					writer.write(log_line.getBytes());
-
-					// write decision
-					writer.write((decision.toString() + "\n").getBytes());
-		
-					writer.flush();
-					writer.close();
-					PL.fsync();
-					
-				} catch (Exception e) {
-					System.err.println( "Server: Error " + e.getMessage());
-					e.printStackTrace();
-				}
+				// write log before phase 2
+				write_log_status(trans_ID, Tstatus.startPhase2, decision.toString());
 
 				// start the second thread
 				processPhase2(trans_ID);
@@ -301,7 +308,7 @@ public class Server implements ProjectLib.CommitServing {
 							}
 
 							try {
-								// write log before phase 1
+								// write log before 2PC done
 								BufferedOutputStream writer = new
 								BufferedOutputStream(new FileOutputStream(log_name, true));
 								
@@ -333,7 +340,6 @@ public class Server implements ProjectLib.CommitServing {
 	/*
 	 * continuePhase1: Continue the first phase from server interuption.
 	 */
-	// TODO: improve modularity, remove repeated code
 	public static void continuePhase1( int trans_ID ) {
 		MyMessage attri = trans_attri.get(trans_ID);
 
@@ -355,27 +361,8 @@ public class Server implements ProjectLib.CommitServing {
 			System.err.println( "Server: Error cannot find this transaction.");
 		}
 		
-		try {
-			// write log before phase 1
-			BufferedOutputStream writer = new
-			BufferedOutputStream(new FileOutputStream(log_name, true));
-			
-			// format: <transaction_ID: transaction_status\n>
-			String log_line = Integer.toString(trans_ID) + ":" + Tstatus.startPhase2.toString()
-																						 + "\n";
-			writer.write(log_line.getBytes());
-
-			// write decision
-			writer.write((attri.decision + "\n").getBytes());
-
-			writer.flush();
-			writer.close();
-			PL.fsync();
-			
-		} catch (Exception e) {
-			System.err.println( "Server: Error " + e.getMessage());
-			e.printStackTrace();
-		}
+		// write log before phase 2
+		write_log_status(trans_ID, Tstatus.startPhase2, attri.decision);
 
 		// start another thread
 		processPhase2(trans_ID);

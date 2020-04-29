@@ -56,6 +56,51 @@ public class UserNode implements ProjectLib.MessageHandling {
 	}
 
 	/*
+	 * write_log_trans: write the status information to log.
+	 */
+	private static void write_log_trans(int trans_ID, Tstatus status) {
+		try {
+			// write log
+			BufferedOutputStream writer = new
+			BufferedOutputStream(new FileOutputStream(log_name, true));
+			
+			writer.write((logType.trans.toString() + "\n").getBytes());
+			// format: <transaction_ID: status\n>
+			String log_line = Integer.toString(trans_ID) + ":" + status.toString() + "\n";
+			writer.write(log_line.getBytes());
+			writer.flush();
+			writer.close();
+			PL.fsync();
+			
+		} catch (Exception e) {
+			System.out.println( "I/O Error " + e.getMessage());
+			e.printStackTrace();
+		}
+	}
+
+	/*
+	 * write_log_file: write the file lock information to log.
+	 */
+	private static void write_log_file(logType type, int trans_ID, String srcName) {
+		try {
+			// write log for file lock
+			BufferedOutputStream writer = new
+			BufferedOutputStream(new FileOutputStream(log_name, true));
+			
+			writer.write((type.toString() + "\n").getBytes());
+			// format: <transaction_ID: source_name\n>
+			String log_line = Integer.toString(trans_ID) + ":" + srcName + "\n";
+			writer.write(log_line.getBytes());
+			writer.flush();
+			writer.close();
+			
+		} catch (Exception e) {
+			System.err.println( "I/O Error " + e.getMessage());
+			e.printStackTrace();
+		}
+	}
+
+	/*
 	 * get_opinion: get the opinon (ok or notok) for a prepare message from the server.
 	 */
 	private synchronized static String get_opinion(MyMessage mmsg) {
@@ -76,22 +121,9 @@ public class UserNode implements ProjectLib.MessageHandling {
 				file_lock.put(srcName, mmsg.trans_ID);
 			}
 
-			try {
-				// write log for file lock
-				BufferedOutputStream writer = new
-				BufferedOutputStream(new FileOutputStream(log_name, true));
-				
-				writer.write((logType.fileLock.toString() + "\n").getBytes());
-				// format: <transaction_ID: source_name\n>
-				String log_line = Integer.toString(mmsg.trans_ID) + ":" + srcName + "\n";
-				writer.write(log_line.getBytes());
-				writer.flush();
-				writer.close();
-				
-			} catch (Exception e) {
-				System.err.println( "I/O Error " + e.getMessage());
-				e.printStackTrace();
-			}
+			// write log when file lock changes
+			write_log_file(logType.fileLock, mmsg.trans_ID, srcName);
+
 		}
 
 		// check if user agree with that
@@ -131,24 +163,8 @@ public class UserNode implements ProjectLib.MessageHandling {
 			// init a transaction
 			trans_status.put(trans_ID, false);
 
-			try {
-				// write log when transaction start
-				BufferedOutputStream writer = new
-				BufferedOutputStream(new FileOutputStream(log_name, true));
-				
-				writer.write((logType.trans.toString() + "\n").getBytes());
-				// format: <transaction_ID: status\n>
-				String log_line = Integer.toString(trans_ID) + ":" + Tstatus.start.toString() 
-																						+ "\n";
-				writer.write(log_line.getBytes());
-				writer.flush();
-				writer.close();
-				PL.fsync();
-				
-			} catch (Exception e) {
-				System.out.println( "I/O Error " + e.getMessage());
-				e.printStackTrace();
-			}
+			// write log when transaction status changes
+			write_log_trans(trans_ID, Tstatus.start);
 	
 			String opinion = get_opinion(mmsg);
 
@@ -178,23 +194,9 @@ public class UserNode implements ProjectLib.MessageHandling {
 				if (trans_status.containsKey(trans_ID)) {
 					trans_status.put(trans_ID, true);
 
-					try {
-						// write log when transaction done
-						BufferedOutputStream writer = new
-						BufferedOutputStream(new FileOutputStream(log_name, true));
-						
-						writer.write((logType.trans.toString() + "\n").getBytes());
-						// format: <transaction_ID: status\n>
-						String log_line = Integer.toString(trans_ID) + ":" + 
-															Tstatus.done.toString() + "\n";
-						writer.write(log_line.getBytes());
-						writer.flush();
-						writer.close();
-						
-					} catch (Exception e) {
-						System.err.println( "I/O Error " + e.getMessage());
-						e.printStackTrace();
-					}
+					// write log when transaction status changes
+					write_log_trans(trans_ID, Tstatus.done);
+
 				}
 				else {
 					System.err.println( myId + ": Error, cannot find this transaction.");
@@ -206,23 +208,9 @@ public class UserNode implements ProjectLib.MessageHandling {
 						file_lock.remove(entry.getKey());
 					}
 
-					try {
-						// write log for file lock
-						BufferedOutputStream writer = new
-						BufferedOutputStream(new FileOutputStream(log_name, true));
-						
-						writer.write((logType.fileUnlock.toString() + "\n").getBytes());
-						// format: <transaction_ID: source_name\n>
-						String log_line = Integer.toString(entry.getValue()) + ":"
-															 + entry.getKey() + "\n";
-						writer.write(log_line.getBytes());
-						writer.flush();
-						writer.close();
-						
-					} catch (Exception e) {
-						System.err.println( "I/O Error " + e.getMessage());
-						e.printStackTrace();
-					}
+					// write log when file lock changes
+					write_log_file(logType.fileUnlock, entry.getValue(), entry.getKey());
+			
 				}
 			}
 			// decision of cancel
@@ -231,48 +219,18 @@ public class UserNode implements ProjectLib.MessageHandling {
 				if (trans_status.containsKey(trans_ID)) {
 					trans_status.remove(trans_ID);
 
-					try {
-						// write log when transaction cancel
-						BufferedOutputStream writer = new
-						BufferedOutputStream(new FileOutputStream(log_name, true));
-						
-						writer.write((logType.trans.toString() + "\n").getBytes());
-						// format: <transaction_ID: status\n>
-						String log_line = Integer.toString(trans_ID) + ":" + 
-															Tstatus.cancel.toString() + "\n";
-						writer.write(log_line.getBytes());
-						writer.flush();
-						writer.close();
-						
-					} catch (Exception e) {
-						System.err.println( "I/O Error " + e.getMessage());
-						e.printStackTrace();
-					}
-			
+					// write log when transaction status changes
+					write_log_trans(trans_ID, Tstatus.cancel);
+
 					// unlock occupied resources
-					// TODO: modularity, remove repeated code
 					for (Map.Entry<String, Integer> entry : file_lock.entrySet()) {
 						if (entry.getValue() == trans_ID) {
 							file_lock.remove(entry.getKey());
 						}
 
-						try {
-							// write log for file lock
-							BufferedOutputStream writer = new
-							BufferedOutputStream(new FileOutputStream(log_name, true));
-							
-							writer.write((logType.fileUnlock.toString() + "\n").getBytes());
-							// format: <transaction_ID: source_name\n>
-							String log_line = Integer.toString(entry.getValue()) + ":" + 
-																	entry.getKey() + "\n";
-							writer.write(log_line.getBytes());
-							writer.flush();
-							writer.close();
-							
-						} catch (Exception e) {
-							System.err.println( "I/O Error " + e.getMessage());
-							e.printStackTrace();
-						}
+						// write log when file lock changes
+						write_log_file(logType.fileUnlock, entry.getValue(), entry.getKey());
+
 					}
 				}
 				else {
@@ -364,4 +322,3 @@ public class UserNode implements ProjectLib.MessageHandling {
 		recovery();
 	}
 }
-
