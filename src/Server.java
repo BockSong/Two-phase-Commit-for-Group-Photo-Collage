@@ -23,8 +23,16 @@ public class Server implements ProjectLib.CommitServing {
 	private static int TIMEOUT_TH = 6000;
 	// number (maximum) of generated transaction ID
 	private static int num_ID = 0;
-	// map transaction ID with their status (startPhase1, startPhase2, transDone)
-	// TODO: use enum for status
+	// status of transaction
+	private static enum Tstatus {
+		startPhase1, startPhase2, transDone;
+	}
+	// decisions in phase 2 in 2PC
+	private static enum Decisions {
+		undecided, done, cancel;
+	}
+
+	// map transaction ID with status
 	private static ConcurrentHashMap<Integer, String> trans_status = new 
 							ConcurrentHashMap<Integer, String>();
 	// map existing transaction ID with some attributes contained in the message
@@ -46,7 +54,7 @@ public class Server implements ProjectLib.CommitServing {
 	private static Object vote_lock = new Object();
 
 	private static String log_name = "server.log";
-	private static Boolean DEBUG = false; 
+	private static Boolean DEBUG = true; 
 
 	/*
 	 * get_ID: generate an sequence of positive integer ID for each transaction.
@@ -93,20 +101,25 @@ public class Server implements ProjectLib.CommitServing {
 		trans_attri.put(trans_ID, attri);
 
 		// initiates a 2PC transaction
-		trans_status.put(trans_ID, "startPhase1");
+		trans_status.put(trans_ID, Tstatus.startPhase1.toString());
 
 		try {
 			// write log before phase 1
 			BufferedOutputStream writer = new
 			BufferedOutputStream(new FileOutputStream(log_name, true));
 			
-			String log_line = Integer.toString(trans_ID) + ":startPhase1\n";
+			// format: <transaction_ID: transaction_status\n>
+			String log_line = Integer.toString(trans_ID) + ":" + Tstatus.startPhase1.toString()
+																						 + "\n";
 			writer.write(log_line.getBytes());
 
 			// write filename
 			writer.write((filename + "\n").getBytes());
 
-			// write contributors. format is explained in the design doc
+			// write contributors by line
+			// Format: <trans_ID: filename\n>, <source_ID1@source_name1, source_name2, ...
+			// 			source_ID2@source_name1, source_name2, ...\n> 
+			// also explained in the design doc
 			log_line = "";
 			for (Map.Entry<String, ArrayList<String>> entry : contributers.entrySet()) {
 				log_line += entry.getKey() + "@";
@@ -163,28 +176,28 @@ public class Server implements ProjectLib.CommitServing {
 
 				// init timestamp for phase 1
 				long startTime = System.currentTimeMillis();
-				String decision = "undecided";	
+				Decisions decision = Decisions.undecided;	
 
 				// keeping check if timeout or receive all
-				while (decision.equals("undecided")) {
+				while (decision == Decisions.undecided) {
 					// use lock to avoid race condition in accessing votes
 					synchronized (vote_lock) {
 						if (trans_votes.get(trans_ID) == num_src) {
 							// apporved
 							if (trans_okvotes.get(trans_ID) == num_src){
-								decision = "done";
+								decision = Decisions.done;
 							}
 							// cancelled
 							else {
-								decision = "cancel";
+								decision = Decisions.cancel;
 							}
 						}
 						// timeout
 						else if (System.currentTimeMillis() - startTime > TIMEOUT_TH) {
-							decision = "cancel"; // this is an abort for timeout
+							decision = Decisions.cancel; // this is an abort for timeout
 						}
 					}
-					if (decision.equals("done")) {
+					if (decision == Decisions.done) {
 						try {
 							// save the composite image in the Server directory
 							RandomAccessFile writer = new RandomAccessFile(filename, "rw");
@@ -199,12 +212,12 @@ public class Server implements ProjectLib.CommitServing {
 				}
 
 				// save the decision
-				attri.decision = decision;
+				attri.decision = decision.toString();
 				trans_attri.put(trans_ID, attri);
 
 				// mark the transaction as phase 2
 				if (trans_status.containsKey(trans_ID)) {
-					trans_status.put(trans_ID, "startPhase2");
+					trans_status.put(trans_ID, Tstatus.startPhase2.toString());
 				}
 				else {
 					System.err.println( "Server: Error, cannot find this transaction.");
@@ -215,11 +228,13 @@ public class Server implements ProjectLib.CommitServing {
 					BufferedOutputStream writer = new
 					BufferedOutputStream(new FileOutputStream(log_name, true));
 					
-					String log_line = Integer.toString(trans_ID) + ":startPhase2\n";
+					// format: <transaction_ID: transaction_status\n>
+					String log_line = Integer.toString(trans_ID) + ":" + 
+														Tstatus.startPhase2.toString() + "\n";
 					writer.write(log_line.getBytes());
 
 					// write decision
-					writer.write((decision + "\n").getBytes());
+					writer.write((decision.toString() + "\n").getBytes());
 		
 					writer.flush();
 					writer.close();
@@ -279,7 +294,7 @@ public class Server implements ProjectLib.CommitServing {
 						if (userList.size() == 0) {
 							// mark this transcation as done
 							if (trans_status.containsKey(trans_ID)) {
-								trans_status.put(trans_ID, "transDone");
+								trans_status.put(trans_ID, Tstatus.transDone.toString());
 							}
 							else {
 								System.err.println( "Server: Error cannot find this transaction.");
@@ -290,7 +305,9 @@ public class Server implements ProjectLib.CommitServing {
 								BufferedOutputStream writer = new
 								BufferedOutputStream(new FileOutputStream(log_name, true));
 								
-								String log_line = Integer.toString(trans_ID) + ":transDone\n";
+								// format: <transaction_ID: transaction_status\n>
+								String log_line = Integer.toString(trans_ID) + ":" + 
+															Tstatus.transDone.toString() + "\n";
 								writer.write(log_line.getBytes());
 								writer.flush();
 								writer.close();
@@ -321,7 +338,7 @@ public class Server implements ProjectLib.CommitServing {
 		MyMessage attri = trans_attri.get(trans_ID);
 
 		// cannot fully recover, abort the transaction
-		attri.decision = "cancel";
+		attri.decision = Decisions.cancel.toString();
 		trans_attri.put(trans_ID, attri);
 
 		// if the composite image was saved, delete it
@@ -332,7 +349,7 @@ public class Server implements ProjectLib.CommitServing {
 
 		// mark the transaction as phase 2
 		if (trans_status.containsKey(trans_ID)) {
-			trans_status.put(trans_ID, "startPhase2");
+			trans_status.put(trans_ID, Tstatus.startPhase2.toString());
 		}
 		else {
 			System.err.println( "Server: Error cannot find this transaction.");
@@ -343,7 +360,9 @@ public class Server implements ProjectLib.CommitServing {
 			BufferedOutputStream writer = new
 			BufferedOutputStream(new FileOutputStream(log_name, true));
 			
-			String log_line = Integer.toString(trans_ID) + ":startPhase2\n";
+			// format: <transaction_ID: transaction_status\n>
+			String log_line = Integer.toString(trans_ID) + ":" + Tstatus.startPhase2.toString()
+																						 + "\n";
 			writer.write(log_line.getBytes());
 
 			// write decision
@@ -401,7 +420,7 @@ public class Server implements ProjectLib.CommitServing {
 					max_transID = trans_ID;
 				}
 
-				if (status.equals("startPhase1")) {
+				if (status.equals(Tstatus.startPhase1.toString())) {
 					filename = parsed_log[i + 1];
 
 					HashMap<String, ArrayList<String>> contributers = new HashMap<>();
@@ -423,7 +442,7 @@ public class Server implements ProjectLib.CommitServing {
 					// these two lines have been parsed
 					i += 2;
 				}
-				else if (status.equals("startPhase2")) {
+				else if (status.equals(Tstatus.startPhase2.toString())) {
 					decision = parsed_log[i + 1];
 					// attri structure should be recovered in previous line
 					MyMessage attri = trans_attri.get(trans_ID);
@@ -442,11 +461,11 @@ public class Server implements ProjectLib.CommitServing {
 			for (Map.Entry<Integer, String> entry : trans_status.entrySet()) {
 				trans_ID = entry.getKey();
 				status = entry.getValue();
-				if (status.equals("startPhase1")) {
+				if (status.equals(Tstatus.startPhase1.toString())) {
 					if (DEBUG)  System.out.println( "Server: continue phase 1. " );
 					continuePhase1(trans_ID);
 				}
-				else if (status.equals("startPhase2")) {
+				else if (status.equals(Tstatus.startPhase2.toString())) {
 					// redo phase 2
 					if (DEBUG)  System.out.println( "Server: continue phase 2. " );
 					processPhase2(trans_ID);
@@ -465,7 +484,7 @@ public class Server implements ProjectLib.CommitServing {
 		int trans_ID = mmsg.trans_ID;
 
 		// if the transaction is already finished, do nothing
-		if (trans_status.get(trans_ID).equals("transDone")) {
+		if (trans_status.get(trans_ID).equals(Tstatus.transDone.toString())) {
 			return;
 		}
 

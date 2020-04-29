@@ -18,7 +18,26 @@ import java.util.concurrent.ConcurrentHashMap;
 public class UserNode implements ProjectLib.MessageHandling {
 	public static String myId;
 	public static ProjectLib PL;
-	private static String log_name = "user.log";
+	// type of messages
+	private static enum msgType {
+		prepare, decision;
+	}
+	// type of log lines
+	private static enum logType {
+		trans, fileLock, fileUnlock;
+	}
+	private static enum Tstatus {
+		start, done, cancel;
+	}
+	// Opinions in phase 1 in 2PC
+	private static enum Opinions {
+		ok, notok;
+	}
+	// decisions in phase 2 in 2PC
+	private static enum Decisions {
+		done, cancel;
+	}
+
 	// map all existing transaction ID with their status (if it is finished)
 	private static ConcurrentHashMap<Integer, Boolean> trans_status = new 
 							ConcurrentHashMap<Integer, Boolean>();
@@ -29,7 +48,8 @@ public class UserNode implements ProjectLib.MessageHandling {
 	// lock for read and then modify file lock
 	private static Object rw_lock = new Object();
 	
-	private static Boolean DEBUG = false; 
+	private static String log_name = "user.log";
+	private static Boolean DEBUG = true; 
 
 	public UserNode( String id ) {
 		myId = id;
@@ -44,13 +64,13 @@ public class UserNode implements ProjectLib.MessageHandling {
 
 			// check if the image is still there
 			if ( !pic.exists() ) {
-				return "notok";
+				return Opinions.notok.toString();
 			}
 
 			synchronized (rw_lock) {
 				// if the image is occupied, return notok
 				if (file_lock.containsKey(srcName)) {
-					return "notok";
+					return Opinions.notok.toString();
 				}
 				// lock the involved image
 				file_lock.put(srcName, mmsg.trans_ID);
@@ -61,7 +81,8 @@ public class UserNode implements ProjectLib.MessageHandling {
 				BufferedOutputStream writer = new
 				BufferedOutputStream(new FileOutputStream(log_name, true));
 				
-				writer.write(("fileLock\n").getBytes());
+				writer.write((logType.fileLock.toString() + "\n").getBytes());
+				// format: <transaction_ID: source_name\n>
 				String log_line = Integer.toString(mmsg.trans_ID) + ":" + srcName + "\n";
 				writer.write(log_line.getBytes());
 				writer.flush();
@@ -77,10 +98,10 @@ public class UserNode implements ProjectLib.MessageHandling {
         String[] arr = new String[mmsg.srcNames.size()]; 
         arr = mmsg.srcNames.toArray(arr); 
 		if (PL.askUser(mmsg.img, arr)) {
-			return "ok";
+			return Opinions.ok.toString();
 		}
 		else {
-			return "notok";
+			return Opinions.notok.toString();
 		}
 	}
 
@@ -97,7 +118,7 @@ public class UserNode implements ProjectLib.MessageHandling {
 		ArrayList<String> srcNames = mmsg.srcNames;
 
 		// if it's a prepare message
-		if (msg_body.equals("prepare")) {
+		if (msg_body.equals(msgType.prepare.toString())) {
 			// If has handled this message before, skip it
 			if (trans_status.containsKey(trans_ID)) {
 				if (DEBUG)  System.out.println( myId + ": Do nothing to the resend message. ");
@@ -115,8 +136,10 @@ public class UserNode implements ProjectLib.MessageHandling {
 				BufferedOutputStream writer = new
 				BufferedOutputStream(new FileOutputStream(log_name, true));
 				
-				writer.write(("trans\n").getBytes());
-				String log_line = Integer.toString(trans_ID) + ":start\n";
+				writer.write((logType.trans.toString() + "\n").getBytes());
+				// format: <transaction_ID: status\n>
+				String log_line = Integer.toString(trans_ID) + ":" + Tstatus.start.toString() 
+																						+ "\n";
 				writer.write(log_line.getBytes());
 				writer.flush();
 				writer.close();
@@ -135,9 +158,9 @@ public class UserNode implements ProjectLib.MessageHandling {
 			PL.sendMessage(mmsg);
 		}
 		// if it's a decision
-		else if (msg_body.equals("decision")) {
+		else if (msg_body.equals(msgType.decision.toString())) {
 			// decision of done
-			if (mmsg.decision.equals("done")) {
+			if (mmsg.decision.equals(Decisions.done.toString())) {
 				// delete sources images from the UserNode directories
 				for (String srcName: mmsg.srcNames) {
 					File pic = new File(srcName);
@@ -156,12 +179,14 @@ public class UserNode implements ProjectLib.MessageHandling {
 					trans_status.put(trans_ID, true);
 
 					try {
-						// write log when transaction start
+						// write log when transaction done
 						BufferedOutputStream writer = new
 						BufferedOutputStream(new FileOutputStream(log_name, true));
 						
-						writer.write(("trans\n").getBytes());
-						String log_line = Integer.toString(trans_ID) + ":done\n";
+						writer.write((logType.trans.toString() + "\n").getBytes());
+						// format: <transaction_ID: status\n>
+						String log_line = Integer.toString(trans_ID) + ":" + 
+															Tstatus.done.toString() + "\n";
 						writer.write(log_line.getBytes());
 						writer.flush();
 						writer.close();
@@ -186,7 +211,8 @@ public class UserNode implements ProjectLib.MessageHandling {
 						BufferedOutputStream writer = new
 						BufferedOutputStream(new FileOutputStream(log_name, true));
 						
-						writer.write(("fileUnlock\n").getBytes());
+						writer.write((logType.fileUnlock.toString() + "\n").getBytes());
+						// format: <transaction_ID: source_name\n>
 						String log_line = Integer.toString(entry.getValue()) + ":"
 															 + entry.getKey() + "\n";
 						writer.write(log_line.getBytes());
@@ -200,18 +226,20 @@ public class UserNode implements ProjectLib.MessageHandling {
 				}
 			}
 			// decision of cancel
-			else if (mmsg.decision.equals("cancel")) {
+			else if (mmsg.decision.equals(Decisions.cancel.toString())) {
 				// cancel the transaction
 				if (trans_status.containsKey(trans_ID)) {
 					trans_status.remove(trans_ID);
 
 					try {
-						// write log when transaction start
+						// write log when transaction cancel
 						BufferedOutputStream writer = new
 						BufferedOutputStream(new FileOutputStream(log_name, true));
 						
-						writer.write(("trans\n").getBytes());
-						String log_line = Integer.toString(trans_ID) + ":cancel\n";
+						writer.write((logType.trans.toString() + "\n").getBytes());
+						// format: <transaction_ID: status\n>
+						String log_line = Integer.toString(trans_ID) + ":" + 
+															Tstatus.cancel.toString() + "\n";
 						writer.write(log_line.getBytes());
 						writer.flush();
 						writer.close();
@@ -233,7 +261,8 @@ public class UserNode implements ProjectLib.MessageHandling {
 							BufferedOutputStream writer = new
 							BufferedOutputStream(new FileOutputStream(log_name, true));
 							
-							writer.write(("fileUnlock\n").getBytes());
+							writer.write((logType.fileUnlock.toString() + "\n").getBytes());
+							// format: <transaction_ID: source_name\n>
 							String log_line = Integer.toString(entry.getValue()) + ":" + 
 																	entry.getKey() + "\n";
 							writer.write(log_line.getBytes());
@@ -296,26 +325,29 @@ public class UserNode implements ProjectLib.MessageHandling {
 		
 			// update trans status and file lock; read 2 lines one time
 			for (int i = 0; i < parsed_log.length; i += 2) {
-				if (parsed_log[0].equals("trans")) {
+				if (parsed_log[0].equals(logType.trans.toString())) {
+					// format: <transaction_ID: status\n>
 					trans_ID = Integer.parseInt(parsed_log[i + 1].split(":")[0]);
 					status = parsed_log[i + 1].split(":")[1];
-					if (status.equals("start")) {
+					if (status.equals(Tstatus.start.toString())) {
 						trans_status.put(trans_ID, false);
 					}
-					else if (status.equals("done")) {
+					else if (status.equals(Tstatus.done.toString())) {
 						trans_status.put(trans_ID, true);
 					}
-					else if (status.equals("cancel")) {
+					else if (status.equals(Tstatus.cancel.toString())) {
 						trans_status.remove(trans_ID);
 					}
 				}
 				else {
+					// format: <transaction_ID: source_name\n>
 					trans_ID = Integer.parseInt(parsed_log[i + 1].split(":")[0]);
 					srcName = parsed_log[i + 1].split(":")[1];
-					if (parsed_log[0].equals("fileLock")) {
+					// lock or unlock resources
+					if (parsed_log[0].equals(logType.fileLock.toString())) {
 						file_lock.put(srcName, trans_ID);
 					}
-					else if (parsed_log[0].equals("fileUnlock")) {
+					else if (parsed_log[0].equals(logType.fileUnlock.toString())) {
 						file_lock.remove(srcName);
 					}
 				}
