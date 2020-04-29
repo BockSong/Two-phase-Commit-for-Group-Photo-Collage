@@ -54,7 +54,7 @@ public class Server implements ProjectLib.CommitServing {
 	private static Object vote_lock = new Object();
 
 	private static String log_name = "server.log";
-	private static Boolean DEBUG = true; 
+	private static Boolean DEBUG = false; 
 
 	/*
 	 * get_ID: generate an sequence of positive integer ID for each transaction.
